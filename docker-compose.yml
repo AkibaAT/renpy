@@ -1,6 +1,7 @@
 services:
   builder:
     image: ghcr.io/akibaat/renpy-build:docker
+    platform: linux/amd64
     volumes:
       - ./:/build/renpy
       - build-tmp:/build/tmp
