@@ -84,6 +84,7 @@ cache/
 /gui/game/gui
 
 # Editors.
+/.idea
 /jedit
 /atom
 /vscode
