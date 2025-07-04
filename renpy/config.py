@@ -1134,7 +1134,7 @@ controller_blocklist = [
 ]
 
 # Should other textures be mipmapped by default?
-mipmap = "auto"
+mipmap = True
 
 # Should dissolve transitions be mipmapped by default?
 mipmap_dissolves = False
@@ -1227,6 +1227,9 @@ relative_transform_size = True
 
 # Should tts of layers be from front to back?
 tts_front_to_back = True
+
+# Should tts invocations be queued (default) or cancel each other out (legacy)?
+tts_queue = True
 
 # Should live2d loading be logged to log.txt
 log_live2d_loading = False
@@ -1566,6 +1569,10 @@ web_unload_music: float|None = None
 If not None, the time in seconds before the music is unloaded when downloaded as part of a web build.
 """
 
+mesh_pad_compat: bool = False
+"""
+Should mesh pad work the way it did before 8.4? (That is, it shifts things to the right/down by pad_left/pad_top.)
+"""
 
 del os
 del collections

@@ -32,12 +32,16 @@ import linecache
 
 import renpy
 
-if TYPE_CHECKING:
-    def match_logical_word(data: str, pos: int) -> tuple[str, bool, int]: ...
-else:
-    from renpy.lexersupport import match_logical_word  # type: ignore
+def match_logical_word(s: str, pos: int) -> tuple[str, bool, int]: ...
+def make_pyexpr(s: str, filename: str, linenumber: int, column: int, text: str, pos: int) -> 'renpy.ast.PyExpr': ...
+if not TYPE_CHECKING:
+    # If Ren'Py is run with system Python, we can't import cython functions.
+    try:
+        from renpy.lexersupport import match_logical_word
+        from renpy.astsupport import make_pyexpr
+    except ImportError:
+        pass
 
-from renpy.astsupport import make_pyexpr
 
 
 class ParseError(SyntaxError):
@@ -211,7 +215,7 @@ def elide_filename(fn):
     return rv
 
 
-def unelide_filename(fn):
+def unelide_filename(fn: str) -> str:
     fn = os.path.normpath(fn)
 
     if renpy.config.alternate_unelide_path is not None:
@@ -529,11 +533,45 @@ def list_logical_lines(
 
     # Add scriptedit lines if requested.
     if add_lines:
+        offsets = []
+
+        if filedata is None:
+            # Calculate positional offsets for CR characters that Python
+            # has ignored during the code read, but that we need to know
+            # about for editing purposes.
+
+            with open(original_filename, "r", encoding="utf-8", newline='') as f:
+                raw_data = f.read()
+
+            if filename.endswith("_ren.py"):
+                raw_data = ren_py_to_rpy(raw_data, filename)
+
+            raw_data += '\n\n'
+
+            # No need to do this unless we notice missing characters.
+            if len_data < len(raw_data):
+                data = raw_data
+
+                count = 0
+
+                for c in data:
+                    if c == '\r':
+                        count += 1
+                    else:
+                        offsets.append(count)
+
         lines = renpy.scriptedit.lines
         for _, number, start, end in rv:
+            if offsets:
+                start += offsets[start]
+                end += offsets[end]
+
             l = renpy.scriptedit.Line(original_filename, number, start)
 
             l.end_delim = end + 1
+
+            if data[end - 1] == '\r':
+                end -= 1
 
             while data[end - 1] == ' ':
                 end -= 1

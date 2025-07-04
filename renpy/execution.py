@@ -178,6 +178,9 @@ class Context(renpy.object.Object):
 
     exception_handler: Callable[[renpy.error.TracebackException], bool] | None
 
+    translated: bool = False
+    "True if the current statement has been translated using the translate system."
+
     def __repr__(self):
 
         try:
@@ -689,10 +692,15 @@ class Context(renpy.object.Object):
             except renpy.game.CallException as e:
 
                 if e.from_current:
-                    return_site = getattr(node, "statement_start", node).name
+                    if (statement_start := getattr(node, "statement_start", None)) is None:
+                        statement_start = node
+
+                    return_site = statement_start.name
+
                 else:
                     if self.next_node is None:
                         raise Exception("renpy.call can't be used when the next node is undefined.")
+
                     return_site = self.next_node.name
 
                 node = self.call(e.label, return_site=return_site)

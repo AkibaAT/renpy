@@ -19,10 +19,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-from __future__ import division, absolute_import, with_statement, print_function, unicode_literals
-from renpy.compat import PY2, basestring, bchr, bord, chr, open, pystr, range, round, str, tobytes, unicode # *
-
-from typing import Optional, Tuple
+from typing import NotRequired, TypedDict
 
 import sys
 import os
@@ -375,6 +372,17 @@ def get_safe_mode():
         return False
 
 
+class RendererInfo(TypedDict):
+    renderer: str
+    resizable: bool
+    additive: bool
+    models: bool
+
+    gpu_vendor: NotRequired[str]
+    gpu_name: NotRequired[str]
+    gpu_driver_version: NotRequired[str]
+
+
 class Renderer(object):
     """
     A Renderer (also known as a draw object) is responsible for drawing a
@@ -394,6 +402,8 @@ class Renderer(object):
     """
 
     texture_cache = { }
+
+    info: RendererInfo
 
     def get_texture_size(self):
         """
@@ -760,9 +770,6 @@ class Interface(object):
         # The time when the event was dispatched.
         self.event_time = 0
 
-        # The time of the last input event (mouse, keyboard, gamepad).
-        self.input_event_time = 0
-
         # The time we saw the last mouse event.
         self.mouse_event_time = None
 
@@ -780,7 +787,10 @@ class Interface(object):
 
         # Init timing.
         init_time()
-        self.mouse_event_time = get_time()
+
+        # The time of the last input event (mouse, keyboard, gamepad).
+        self.input_event_time = get_time()
+        self.mouse_event_time = self.input_event_time - 1.0  # Setting it 1s before input_event_time allows the first interaction to use default focus.
 
         # The current window caption.
         self.window_caption = None
@@ -2752,6 +2762,8 @@ class Interface(object):
             renpy.display.behavior.input_pre_per_interact()
             root_widget.visit_all(lambda d : d.per_interact())
             renpy.display.behavior.input_post_per_interact()
+
+            renpy.gl2.live2d.update_states()
 
             self.take_layer_displayable = None
 
