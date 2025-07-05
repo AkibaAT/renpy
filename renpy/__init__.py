@@ -557,6 +557,8 @@ def import_all():
     import renpy.test.testreporter
     import renpy.test.testexecution
 
+    import renpy.testing
+
     import renpy.update
     import renpy.update.deferred
 
