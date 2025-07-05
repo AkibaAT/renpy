@@ -527,6 +527,27 @@ from renpy.exports.restartexports import (
     utter_restart,
 )
 
+from renpy.exports.testingexports import (
+    testing_interface,
+    testing_inspect_state,
+    testing_save_state,
+    testing_load_state,
+    testing_advance_dialogue,
+    testing_rollback,
+    testing_select_choice,
+    testing_get_choices,
+    testing_get_current_label,
+    testing_get_variables,
+    testing_set_variable,
+    testing_start_http_server,
+    testing_stop_http_server,
+    testing_is_http_server_running,
+    testing_get_http_server_url,
+    testing_enable_headless,
+    testing_disable_headless,
+    testing_is_headless,
+)
+
 from renpy.exports.rollbackexports import (
     block_rollback,
     can_rollback,
