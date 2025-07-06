@@ -39,6 +39,7 @@ from . import game_controller
 from . import headless
 from . import cli
 from . import http_server
+from . import debugger
 
 # Main testing interface instance
 _testing_interface = None
@@ -124,8 +125,91 @@ def get_http_server_url():
     """Get the HTTP API server URL."""
     return get_testing_interface().get_http_server_url()
 
-# Export main interface class
+# Debugging and Breakpoint Functions
+def enable_debug_mode():
+    """Enable debug mode for breakpoint functionality."""
+    return get_testing_interface().enable_debug_mode()
+
+def disable_debug_mode():
+    """Disable debug mode."""
+    return get_testing_interface().disable_debug_mode()
+
+def is_debug_mode():
+    """Check if debug mode is enabled."""
+    return get_testing_interface().is_debug_mode()
+
+def is_paused():
+    """Check if execution is paused at a breakpoint."""
+    return get_testing_interface().is_paused()
+
+def set_breakpoint(filename, line, condition=None):
+    """Set a breakpoint at the specified location."""
+    return get_testing_interface().set_breakpoint(filename, line, condition)
+
+def clear_breakpoint(filename, line):
+    """Clear a breakpoint at the specified location."""
+    return get_testing_interface().clear_breakpoint(filename, line)
+
+def clear_all_breakpoints(filename=None):
+    """Clear all breakpoints, optionally for a specific file."""
+    return get_testing_interface().clear_all_breakpoints(filename)
+
+def list_breakpoints():
+    """Get a list of all current breakpoints."""
+    return get_testing_interface().list_breakpoints()
+
+def enable_breakpoint(filename, line, enabled=True):
+    """Enable or disable a specific breakpoint."""
+    return get_testing_interface().enable_breakpoint(filename, line, enabled)
+
+def continue_execution():
+    """Continue execution from a paused state."""
+    return get_testing_interface().continue_execution()
+
+def step_execution():
+    """Execute one step and pause again."""
+    return get_testing_interface().step_execution()
+
+def get_current_location():
+    """Get current execution location."""
+    return get_testing_interface().get_current_location()
+
+def get_call_stack():
+    """Get current call stack information."""
+    return get_testing_interface().get_call_stack()
+
+def set_breakpoint_callback(callback):
+    """Set callback function to be called when breakpoint is hit."""
+    return get_testing_interface().set_breakpoint_callback(callback)
+
+# Python Debugger Integration Functions
+def enable_python_debugging():
+    """Enable Python debugger integration for .rpy files."""
+    return get_testing_interface().enable_python_debugging()
+
+def disable_python_debugging():
+    """Disable Python debugger integration."""
+    return get_testing_interface().disable_python_debugging()
+
+def start_debugpy_server(host='localhost', port=5678, wait_for_client=False):
+    """Start debugpy server for DAP-compatible debuggers (VS Code, etc.)."""
+    return get_testing_interface().start_debugpy_server(host, port, wait_for_client)
+
+def stop_debugpy_server():
+    """Stop debugpy server."""
+    return get_testing_interface().stop_debugpy_server()
+
+def start_pdb_debugging():
+    """Start pdb debugging session."""
+    return get_testing_interface().start_pdb_debugging()
+
+def post_mortem_debug():
+    """Start post-mortem debugging session."""
+    return get_testing_interface().post_mortem_debug()
+
+# Export main classes
 TestingInterface = interface.TestingInterface
+RenpyDebugger = debugger.RenpyDebugger
 
 # Register CLI commands
 cli.register_commands()

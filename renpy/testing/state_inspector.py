@@ -228,6 +228,9 @@ class StateInspector(object):
                                 if hasattr(displayable, 'child') and hasattr(displayable.child, 'name'):
                                     image_info['image_name'] = str(displayable.child.name)
 
+                                # Extract positioning and sizing information
+                                self._extract_display_properties(displayable, sle, image_info)
+
                                 scene_info['shown_images'].append(image_info)
                             else:
                                 print(f"[DEBUG] SLE {i} has no tag/name (not an image)")
@@ -327,6 +330,14 @@ class StateInspector(object):
                 import traceback
                 print(f"[DEBUG] traceback: {traceback.format_exc()}")
 
+            # Add detailed screen content analysis
+            try:
+                detailed_screens = self._get_detailed_screen_info()
+                if detailed_screens:
+                    scene_info['detailed_screens'] = detailed_screens
+            except Exception as e:
+                print(f"[DEBUG] Error getting detailed screen info: {e}")
+
             print(f"[DEBUG] final scene_info: {scene_info}")
             return scene_info
         except Exception as e:
@@ -390,64 +401,87 @@ class StateInspector(object):
         try:
             choices = []
 
-            print("[DEBUG] get_choices() called")
+            # print("[DEBUG] get_choices() called")  # Reduce debug output for performance
 
             # Check for active screens that might contain choices
             scene_lists = renpy.exports.scene_lists()
-            print(f"[DEBUG] scene_lists: {scene_lists}")
+            # print(f"[DEBUG] scene_lists: {scene_lists}")  # Reduce debug output
             if scene_lists and hasattr(scene_lists, 'layers'):
-                print(f"[DEBUG] scene_lists.layers: {list(scene_lists.layers.keys())}")
+                # print(f"[DEBUG] scene_lists.layers: {list(scene_lists.layers.keys())}")  # Reduce debug output
                 # Look through all layers for screen displayables
                 for layer_name, layer_list in scene_lists.layers.items():
-                    print(f"[DEBUG] checking layer {layer_name}: {len(layer_list)} items")
+                    # print(f"[DEBUG] checking layer {layer_name}: {len(layer_list)} items")  # Reduce debug output
                     # Layer is a list of SLE (Scene List Entry) objects
                     for i, sle in enumerate(layer_list):
-                        print(f"[DEBUG] SLE {i}: {sle}")
+                        # print(f"[DEBUG] SLE {i}: {sle}")  # Reduce debug output
 
                         # Get the displayable from the SLE
                         if hasattr(sle, 'displayable'):
                             displayable = sle.displayable
-                            print(f"[DEBUG] SLE {i} displayable: {displayable}")
+                            # print(f"[DEBUG] SLE {i} displayable: {displayable}")  # Reduce debug output
 
                             # Check if this is a screen displayable
                             if hasattr(displayable, 'screen_name'):
                                 screen_name = displayable.screen_name
                                 if isinstance(screen_name, tuple):
                                     screen_name = screen_name[0]
-                                print(f"[DEBUG] found screen displayable: {screen_name}")
+                                # print(f"[DEBUG] found screen displayable: {screen_name}")  # Reduce debug output
+
+                                # Extract screen background and visual elements
+                                screen_info = {
+                                    'tag': f'screen_{screen_name}',
+                                    'name': [screen_name],
+                                    'layer': layer_name,
+                                    'type': 'screen'
+                                }
+                                
+                                # Try to get screen background information
+                                self._extract_screen_background(displayable, screen_info)
+                                
+                                # Extract positioning and sizing information for the screen
+                                self._extract_display_properties(displayable, sle, screen_info)
+                                
+                                # Extract all visual content from within the screen
+                                screen_content = []
+                                self._extract_screen_content(displayable, screen_content)
+                                if screen_content:
+                                    screen_info['content'] = screen_content
+                                
+                                # This was incorrectly trying to append to scene_info in get_choices()
+                                # Remove this line as it doesn't belong here
 
                                 # Check if this screen has scope with items (like choice screens)
                                 if hasattr(displayable, 'scope'):
-                                    print(f"[DEBUG] screen {screen_name} scope keys: {list(displayable.scope.keys())}")
+                                    # print(f"[DEBUG] screen {screen_name} scope keys: {list(displayable.scope.keys())}")  # Reduce debug output
                                     if 'items' in displayable.scope:
                                         items = displayable.scope['items']
-                                        print(f"[DEBUG] found {len(items)} items in scope")
+                                        # print(f"[DEBUG] found {len(items)} items in scope")  # Reduce debug output
                                         if items:
                                             for j, item in enumerate(items):
-                                                print(f"[DEBUG] item {j}: {item}")
+                                                # print(f"[DEBUG] item {j}: {item}")  # Reduce debug output
                                                 if hasattr(item, 'caption') and hasattr(item, 'action'):
                                                     choices.append({
                                                         'label': str(item.caption),
                                                         'action': str(item.action),
                                                         'screen': screen_name
                                                     })
-                                else:
-                                    print(f"[DEBUG] screen {screen_name} has no scope")
+                                # else:
+                                #     print(f"[DEBUG] screen {screen_name} has no scope")  # Reduce debug output
 
-                                # For tutorial screen, try to extract textbutton choices
-                                if screen_name == 'tutorials' and hasattr(displayable, 'child'):
-                                    print(f"[DEBUG] extracting choices from tutorials screen")
+                                # For all screens with widgets, try to extract textbutton choices
+                                if hasattr(displayable, 'child'):
+                                    # print(f"[DEBUG] extracting choices from {screen_name} screen")  # Reduce debug output
                                     extracted = self._extract_screen_choices(displayable, screen_name)
-                                    print(f"[DEBUG] extracted {len(extracted)} choices")
+                                    # print(f"[DEBUG] extracted {len(extracted)} choices")  # Reduce debug output
                                     choices.extend(extracted)
-                            else:
-                                print(f"[DEBUG] displayable has no screen_name")
-                        else:
-                            print(f"[DEBUG] SLE {i} has no displayable attribute")
-            else:
-                print("[DEBUG] No scene_lists or no layers")
+                            # else:
+                            #     print(f"[DEBUG] displayable has no screen_name")  # Reduce debug output
+                        # else:
+                        #     print(f"[DEBUG] SLE {i} has no displayable attribute")  # Reduce debug output
+            # else:
+            #     print("[DEBUG] No scene_lists or no layers")  # Reduce debug output
 
-            print(f"[DEBUG] final choices: {choices}")
+            # print(f"[DEBUG] final choices: {choices}")  # Reduce debug output
             return choices
         except Exception as e:
             print(f"[DEBUG] Exception in get_choices: {e}")
@@ -474,28 +508,84 @@ class StateInspector(object):
                 if widget is None:
                     return found
 
-                # Check if this widget is a button with text and action
-                if hasattr(widget, 'clicked') and widget.clicked:
-                    # Try to get button text
-                    text = None
-                    if hasattr(widget, 'children'):
-                        for child in widget.children:
-                            if hasattr(child, 'text'):
-                                text = str(child.text)
-                                break
-
+                widget_type = type(widget).__name__
+                
+                # Generic button detection - look for any widget with a click action
+                is_clickable = False
+                action_attr = None
+                
+                # Check for various click/action attributes
+                for attr in ['clicked', 'action', 'activate', 'hovered']:
+                    if hasattr(widget, attr):
+                        action_value = getattr(widget, attr)
+                        if action_value:  # Only if the action is not None/empty
+                            is_clickable = True
+                            action_attr = attr
+                            break
+                
+                if is_clickable:
+                    # Try to get button text using multiple methods
+                    text = self._extract_widget_text(widget)
+                    
                     if text:
-                        found.append({
+                        action_value = getattr(widget, action_attr)
+                        
+                        # Check if the button is actually clickable/enabled
+                        is_enabled = self._check_widget_enabled(widget, action_value)
+                        
+                        choice_data = {
                             'label': text,
-                            'action': str(widget.clicked),
-                            'screen': screen_name
-                        })
+                            'action': str(action_value),
+                            'screen': screen_name,
+                            'type': widget_type,
+                            'action_attr': action_attr,
+                            'enabled': is_enabled
+                        }
+                        
+                        # Add additional state information if available
+                        if hasattr(widget, 'sensitive'):
+                            choice_data['sensitive'] = widget.sensitive
+                        if hasattr(widget, 'selected'):
+                            choice_data['selected'] = widget.selected
+                            
+                        found.append(choice_data)
+                        # status = "enabled" if is_enabled else "disabled"
+                        # print(f"[DEBUG] found {widget_type}: {text} -> {action_value} ({status})")  # Reduce debug output
+
+                # Also check for specific Ren'Py button types by class name
+                button_indicators = ['button', 'textbutton', 'imagebutton', 'hotspot', 'choice']
+                if any(indicator in widget_type.lower() for indicator in button_indicators):
+                    # print(f"[DEBUG] detected button-type widget: {widget_type}")  # Reduce debug output
+                    
+                    # Even if no direct action, might still be clickable
+                    if not is_clickable:
+                        text = self._extract_widget_text(widget)
+                        if text:
+                            # Check if this button-type widget is enabled
+                            is_enabled = self._check_widget_enabled(widget, None)
+                            
+                            choice_data = {
+                                'label': text,
+                                'action': 'none',
+                                'screen': screen_name,
+                                'type': widget_type,
+                                'action_attr': 'detected_by_type',
+                                'enabled': is_enabled
+                            }
+                            
+                            # Add additional state information if available
+                            if hasattr(widget, 'sensitive'):
+                                choice_data['sensitive'] = widget.sensitive
+                            if hasattr(widget, 'selected'):
+                                choice_data['selected'] = widget.selected
+                                
+                            found.append(choice_data)
 
                 # Recursively check children
-                if hasattr(widget, 'children'):
+                if hasattr(widget, 'children') and widget.children:
                     for child in widget.children:
                         found.extend(find_buttons(child))
-                elif hasattr(widget, 'child'):
+                elif hasattr(widget, 'child') and widget.child:
                     found.extend(find_buttons(widget.child))
 
                 return found
@@ -507,6 +597,618 @@ class StateInspector(object):
             pass
 
         return choices
+    
+    def _extract_widget_text(self, widget):
+        """
+        Extract text from a widget using multiple methods.
+        
+        Args:
+            widget: The widget to extract text from
+            
+        Returns:
+            str or None: The extracted text, or None if no text found
+        """
+        text = None
+        
+        # Method 1: Check children for text widgets
+        if hasattr(widget, 'children') and widget.children:
+            for child in widget.children:
+                if hasattr(child, 'text') and child.text:
+                    text = child.text
+                    break
+                # Also check for nested text in child's children
+                elif hasattr(child, 'children') and child.children:
+                    for grandchild in child.children:
+                        if hasattr(grandchild, 'text') and grandchild.text:
+                            text = grandchild.text
+                            break
+                    if text:
+                        break
+        
+        # Method 2: Check if widget itself has text
+        if not text and hasattr(widget, 'text') and widget.text:
+            text = widget.text
+        
+        # Method 3: Check child.text
+        if not text and hasattr(widget, 'child') and widget.child:
+            if hasattr(widget.child, 'text') and widget.child.text:
+                text = widget.child.text
+            # Also check child's children
+            elif hasattr(widget.child, 'children') and widget.child.children:
+                for grandchild in widget.child.children:
+                    if hasattr(grandchild, 'text') and grandchild.text:
+                        text = grandchild.text
+                        break
+        
+        # Method 4: Check for label or caption attributes
+        if not text:
+            for attr in ['label', 'caption', 'title', 'name']:
+                if hasattr(widget, attr):
+                    attr_value = getattr(widget, attr)
+                    if attr_value:
+                        text = attr_value
+                        break
+        
+        # Normalize text format (handle lists/tuples)
+        if text:
+            if isinstance(text, (list, tuple)) and len(text) > 0:
+                text = str(text[0])
+            else:
+                text = str(text)
+            
+            # Clean up the text
+            text = text.strip()
+            if text:
+                return text
+        
+        return None
+    
+    def _extract_display_properties(self, displayable, sle, image_info):
+        """
+        Extract positioning, sizing, and transform information from a displayable.
+        
+        Args:
+            displayable: The displayable object
+            sle: The scene list entry
+            image_info: Dictionary to add properties to
+        """
+        try:
+            # Initialize transform/positioning info
+            transform_info = {}
+            
+            # Try to get position information
+            if hasattr(displayable, 'xpos'):
+                transform_info['xpos'] = displayable.xpos
+            if hasattr(displayable, 'ypos'):
+                transform_info['ypos'] = displayable.ypos
+            if hasattr(displayable, 'xanchor'):
+                transform_info['xanchor'] = displayable.xanchor
+            if hasattr(displayable, 'yanchor'):
+                transform_info['yanchor'] = displayable.yanchor
+            
+            # Try to get size information
+            if hasattr(displayable, 'width'):
+                transform_info['width'] = displayable.width
+            if hasattr(displayable, 'height'):
+                transform_info['height'] = displayable.height
+            if hasattr(displayable, 'xsize'):
+                transform_info['xsize'] = displayable.xsize
+            if hasattr(displayable, 'ysize'):
+                transform_info['ysize'] = displayable.ysize
+            
+            # Try to get transform properties
+            if hasattr(displayable, 'xalign'):
+                transform_info['xalign'] = displayable.xalign
+            if hasattr(displayable, 'yalign'):
+                transform_info['yalign'] = displayable.yalign
+            if hasattr(displayable, 'zoom'):
+                transform_info['zoom'] = displayable.zoom
+            if hasattr(displayable, 'alpha'):
+                transform_info['alpha'] = displayable.alpha
+            if hasattr(displayable, 'rotate'):
+                transform_info['rotate'] = displayable.rotate
+                
+            # Try to get offset information  
+            if hasattr(displayable, 'xoffset'):
+                transform_info['xoffset'] = displayable.xoffset
+            if hasattr(displayable, 'yoffset'):
+                transform_info['yoffset'] = displayable.yoffset
+            
+            # Try to get the actual rendered size and position from the SLE
+            if hasattr(sle, 'x'):
+                transform_info['rendered_x'] = sle.x
+            if hasattr(sle, 'y'):
+                transform_info['rendered_y'] = sle.y
+            if hasattr(sle, 'w'):
+                transform_info['rendered_width'] = sle.w
+            if hasattr(sle, 'h'):
+                transform_info['rendered_height'] = sle.h
+                
+            # Check for transform matrices or complex transforms
+            if hasattr(displayable, 'st') and hasattr(displayable, 'at'):
+                transform_info['state_time'] = getattr(displayable, 'st', None)
+                transform_info['animation_time'] = getattr(displayable, 'at', None)
+                
+            # Look for child displayables that might have transform info
+            if hasattr(displayable, 'child'):
+                child = displayable.child
+                child_transform = {}
+                
+                for attr in ['xpos', 'ypos', 'xalign', 'yalign', 'zoom', 'alpha', 'rotate']:
+                    if hasattr(child, attr):
+                        value = getattr(child, attr)
+                        if value is not None:
+                            child_transform[f'child_{attr}'] = value
+                            
+                if child_transform:
+                    transform_info.update(child_transform)
+            
+            # Only add transform_info if we found any properties
+            if transform_info:
+                image_info['transform'] = transform_info
+                
+        except Exception as e:
+            print(f"[DEBUG] Error extracting display properties: {e}")
+            # Don't fail the entire operation if we can't get transform info
+            pass
+
+    def _extract_screen_background(self, screen_displayable, screen_info):
+        """
+        Extract background information from a screen displayable.
+        
+        Args:
+            screen_displayable: The screen displayable object
+            screen_info: Dictionary to add background info to
+        """
+        try:
+            background_info = {}
+            
+            # Check for direct background properties
+            if hasattr(screen_displayable, 'background'):
+                bg = screen_displayable.background
+                if bg:
+                    background_info['background'] = str(bg)
+            
+            # Check if the screen has a child that might be the background
+            if hasattr(screen_displayable, 'child'):
+                child = screen_displayable.child
+                if child:
+                    # Look for background in child displayables
+                    self._search_displayable_tree_for_images(child, background_info, 'screen_content')
+            
+            # Check the screen's style for background information
+            if hasattr(screen_displayable, 'style'):
+                style = screen_displayable.style
+                if style and hasattr(style, 'background'):
+                    if style.background:
+                        background_info['style_background'] = str(style.background)
+            
+            if background_info:
+                screen_info['background_info'] = background_info
+                
+        except Exception as e:
+            print(f"[DEBUG] Error extracting screen background: {e}")
+            pass
+
+    def _search_displayable_tree_for_images(self, displayable, info_dict, prefix=''):
+        """
+        Recursively search a displayable tree for image content.
+        
+        Args:
+            displayable: The displayable to search
+            info_dict: Dictionary to add findings to
+            prefix: Prefix for keys in the info_dict
+        """
+        try:
+            if not displayable:
+                return
+                
+            # Check if this displayable has image-like properties
+            displayable_type = type(displayable).__name__
+            
+            # Look for image displayables
+            if 'Image' in displayable_type:
+                if hasattr(displayable, 'filename'):
+                    info_dict[f'{prefix}_image_file'] = displayable.filename
+                elif hasattr(displayable, 'name'):
+                    info_dict[f'{prefix}_image_name'] = str(displayable.name)
+            
+            # Look for background styles
+            if hasattr(displayable, 'style') and displayable.style:
+                if hasattr(displayable.style, 'background') and displayable.style.background:
+                    info_dict[f'{prefix}_background'] = str(displayable.style.background)
+            
+            # Search children recursively
+            if hasattr(displayable, 'children'):
+                for i, child in enumerate(displayable.children or []):
+                    self._search_displayable_tree_for_images(child, info_dict, f'{prefix}_child_{i}')
+            elif hasattr(displayable, 'child') and displayable.child:
+                self._search_displayable_tree_for_images(displayable.child, info_dict, f'{prefix}_child')
+                
+        except Exception as e:
+            print(f"[DEBUG] Error searching displayable tree: {e}")
+            pass
+
+    def _extract_screen_content(self, screen_displayable, content_list, depth=0, max_depth=10):
+        """
+        Extract all visual content from within a screen displayable.
+        
+        Args:
+            screen_displayable: The screen displayable to examine
+            content_list: List to append content items to
+            depth: Current recursion depth
+            max_depth: Maximum recursion depth to prevent infinite loops
+        """
+        try:
+            if depth > max_depth:
+                return
+                
+            if not screen_displayable:
+                return
+                
+            # Get the main child of the screen
+            if hasattr(screen_displayable, 'child') and screen_displayable.child:
+                self._traverse_displayable_hierarchy(screen_displayable.child, content_list, depth + 1, max_depth)
+                
+        except Exception as e:
+            print(f"[DEBUG] Error extracting screen content: {e}")
+            pass
+
+    def _traverse_displayable_hierarchy(self, displayable, content_list, depth=0, max_depth=10):
+        """
+        Recursively traverse a displayable hierarchy to find all visual content.
+        
+        Args:
+            displayable: The displayable to examine
+            content_list: List to append found content to
+            depth: Current recursion depth
+            max_depth: Maximum recursion depth
+        """
+        try:
+            if depth > max_depth or not displayable:
+                return
+                
+            displayable_type = type(displayable).__name__
+            content_item = {
+                'type': displayable_type,
+                'depth': depth
+            }
+            
+            # Check for image-related displayables
+            if 'Image' in displayable_type:
+                if hasattr(displayable, 'filename'):
+                    content_item['filename'] = displayable.filename
+                if hasattr(displayable, 'name'):
+                    content_item['image_name'] = str(displayable.name)
+                if hasattr(displayable, 'image'):
+                    content_item['image'] = str(displayable.image)
+                content_list.append(content_item)
+                
+            # Check for text displayables
+            elif 'Text' in displayable_type:
+                if hasattr(displayable, 'text'):
+                    content_item['text'] = str(displayable.text)[:100]  # Limit text length
+                content_list.append(content_item)
+                
+            # Check for background in styles
+            if hasattr(displayable, 'style') and displayable.style:
+                if hasattr(displayable.style, 'background') and displayable.style.background:
+                    content_item['style_background'] = str(displayable.style.background)
+                    if 'style_background' in content_item:
+                        content_list.append(content_item)
+            
+            # Check for transform/positioning properties
+            transform_props = {}
+            for prop in ['xpos', 'ypos', 'xalign', 'yalign', 'zoom', 'alpha', 'rotate']:
+                if hasattr(displayable, prop):
+                    value = getattr(displayable, prop)
+                    if value is not None:
+                        transform_props[prop] = value
+            
+            if transform_props:
+                content_item['transform'] = transform_props
+                
+            # Only add to list if we found meaningful content
+            meaningful_keys = ['filename', 'image_name', 'image', 'text', 'style_background', 'transform']
+            if any(key in content_item for key in meaningful_keys):
+                if content_item not in content_list:  # Avoid duplicates
+                    content_list.append(content_item)
+            
+            # Recursively check children
+            if hasattr(displayable, 'children') and displayable.children:
+                for child in displayable.children:
+                    self._traverse_displayable_hierarchy(child, content_list, depth + 1, max_depth)
+            elif hasattr(displayable, 'child') and displayable.child:
+                self._traverse_displayable_hierarchy(displayable.child, content_list, depth + 1, max_depth)
+                
+        except Exception as e:
+            print(f"[DEBUG] Error traversing displayable hierarchy: {e}")
+            pass
+
+    def _get_detailed_screen_info(self):
+        """
+        Get detailed information about screen content including backgrounds and visual elements.
+        
+        Returns:
+            list: List of detailed screen information
+        """
+        try:
+            detailed_screens = []
+            print("[DEBUG] Getting detailed screen info...")
+            
+            # Get scene lists
+            scene_lists = renpy.exports.scene_lists()
+            if not scene_lists or not hasattr(scene_lists, 'layers'):
+                return detailed_screens
+                
+            # Process screens layer
+            if 'screens' in scene_lists.layers:
+                screens_layer = scene_lists.layers['screens']
+                print(f"[DEBUG] Found {len(screens_layer)} items in screens layer")
+                
+                for i, sle in enumerate(screens_layer):
+                    screen_detail = self._analyze_screen_sle(sle, i)
+                    if screen_detail:
+                        detailed_screens.append(screen_detail)
+            
+            return detailed_screens
+            
+        except Exception as e:
+            print(f"[DEBUG] Error in _get_detailed_screen_info: {e}")
+            return []
+
+    def _analyze_screen_sle(self, sle, index):
+        """
+        Analyze a single screen SLE (Scene List Entry) for detailed content.
+        
+        Args:
+            sle: The scene list entry
+            index: Index in the layer
+            
+        Returns:
+            dict: Detailed screen information or None
+        """
+        try:
+            if not hasattr(sle, 'displayable'):
+                return None
+                
+            displayable = sle.displayable
+            if not hasattr(displayable, 'screen_name'):
+                return None
+                
+            screen_name = displayable.screen_name
+            if isinstance(screen_name, tuple):
+                screen_name = screen_name[0]
+                
+            print(f"[DEBUG] Analyzing screen: {screen_name}")
+            
+            screen_info = {
+                'screen_name': screen_name,
+                'index': index,
+                'type': type(displayable).__name__,
+                'visual_elements': []
+            }
+            
+            # Extract transform properties of the screen itself
+            screen_info['transform'] = self._get_transform_properties(displayable, sle)
+            
+            # Analyze screen content
+            if hasattr(displayable, 'child') and displayable.child:
+                print(f"[DEBUG] Screen {screen_name} has child: {type(displayable.child).__name__}")
+                screen_info['content_type'] = type(displayable.child).__name__
+                
+                # Extract visual elements from the screen's content
+                visual_elements = self._extract_visual_elements(displayable.child)
+                screen_info['visual_elements'] = visual_elements
+                
+            return screen_info
+            
+        except Exception as e:
+            print(f"[DEBUG] Error analyzing screen SLE: {e}")
+            return None
+
+    def _extract_visual_elements(self, container):
+        """
+        Extract visual elements (images, backgrounds, etc.) from a container.
+        
+        Args:
+            container: The container displayable to analyze
+            
+        Returns:
+            list: List of visual element information
+        """
+        elements = []
+        try:
+            if hasattr(container, 'children') and container.children:
+                print(f"[DEBUG] Container has {len(container.children)} children")
+                for i, child in enumerate(container.children):
+                    element = self._analyze_visual_element(child, i)
+                    if element:
+                        elements.append(element)
+            elif hasattr(container, 'child') and container.child:
+                element = self._analyze_visual_element(container.child, 0)
+                if element:
+                    elements.append(element)
+                    
+        except Exception as e:
+            print(f"[DEBUG] Error extracting visual elements: {e}")
+            
+        return elements
+
+    def _analyze_visual_element(self, element, index):
+        """
+        Analyze a single visual element.
+        
+        Args:
+            element: The displayable element
+            index: Element index
+            
+        Returns:
+            dict: Element information or None
+        """
+        try:
+            element_type = type(element).__name__
+            info = {
+                'index': index,
+                'type': element_type
+            }
+            
+            # Check for image properties
+            if 'Image' in element_type:
+                if hasattr(element, 'filename'):
+                    info['filename'] = element.filename
+                    print(f"[DEBUG] Found image: {element.filename}")
+                if hasattr(element, 'name'):
+                    info['name'] = str(element.name)
+                if hasattr(element, 'image'):
+                    info['image'] = str(element.image)
+                    
+            # Check for text properties
+            elif 'Text' in element_type:
+                if hasattr(element, 'text'):
+                    info['text'] = str(element.text)[:100]  # Limit length
+                    
+            # Check for background in style
+            if hasattr(element, 'style') and element.style:
+                if hasattr(element.style, 'background') and element.style.background:
+                    info['style_background'] = str(element.style.background)
+                    
+            # Get transform properties
+            transform = self._get_transform_properties(element)
+            if transform:
+                info['transform'] = transform
+                
+            # Only return if we found meaningful content
+            meaningful_keys = ['filename', 'name', 'image', 'text', 'style_background']
+            if any(key in info for key in meaningful_keys):
+                return info
+                
+            return None
+            
+        except Exception as e:
+            print(f"[DEBUG] Error analyzing visual element: {e}")
+            return None
+
+    def _get_transform_properties(self, displayable, sle=None):
+        """
+        Extract transform/positioning properties from a displayable.
+        
+        Args:
+            displayable: The displayable to examine
+            sle: Optional scene list entry for rendered properties
+            
+        Returns:
+            dict: Transform properties
+        """
+        transform = {}
+        try:
+            # Position properties
+            for prop in ['xpos', 'ypos', 'xalign', 'yalign', 'xanchor', 'yanchor']:
+                if hasattr(displayable, prop):
+                    value = getattr(displayable, prop)
+                    if value is not None:
+                        transform[prop] = value
+                        
+            # Size properties
+            for prop in ['width', 'height', 'xsize', 'ysize']:
+                if hasattr(displayable, prop):
+                    value = getattr(displayable, prop)
+                    if value is not None:
+                        transform[prop] = value
+                        
+            # Visual properties
+            for prop in ['zoom', 'alpha', 'rotate']:
+                if hasattr(displayable, prop):
+                    value = getattr(displayable, prop)
+                    if value is not None:
+                        transform[prop] = value
+                        
+            # Offset properties
+            for prop in ['xoffset', 'yoffset']:
+                if hasattr(displayable, prop):
+                    value = getattr(displayable, prop)
+                    if value is not None:
+                        transform[prop] = value
+                        
+            # Rendered properties from SLE
+            if sle:
+                for prop, attr in [('rendered_x', 'x'), ('rendered_y', 'y'), 
+                                 ('rendered_width', 'w'), ('rendered_height', 'h')]:
+                    if hasattr(sle, attr):
+                        value = getattr(sle, attr)
+                        if value is not None:
+                            transform[prop] = value
+                            
+        except Exception as e:
+            print(f"[DEBUG] Error getting transform properties: {e}")
+            
+        return transform
+
+    def _check_widget_enabled(self, widget, action_value):
+        """
+        Check if a widget is actually enabled/clickable.
+        
+        Args:
+            widget: The widget to check
+            action_value: The action associated with the widget
+            
+        Returns:
+            bool: True if the widget is enabled and clickable
+        """
+        try:
+            # Check widget's sensitive attribute (Ren'Py standard)
+            if hasattr(widget, 'sensitive') and widget.sensitive is not None:
+                if not widget.sensitive:
+                    # print(f"[DEBUG] widget not sensitive: {widget.sensitive}")  # Reduce debug output
+                    return False
+                # else:
+                #     print(f"[DEBUG] widget is sensitive: {widget.sensitive}")  # Reduce debug output
+            
+            # Check if widget is focusable/enabled (only if explicitly set to False)
+            if hasattr(widget, 'focusable') and widget.focusable is not None:
+                if widget.focusable is False:
+                    print(f"[DEBUG] widget not focusable: {widget.focusable}")
+                    return False
+            
+            # Check for disabled/enabled attributes
+            for attr in ['enabled', 'disabled']:
+                if hasattr(widget, attr):
+                    value = getattr(widget, attr)
+                    if attr == 'enabled' and not value:
+                        print(f"[DEBUG] widget explicitly disabled: enabled={value}")
+                        return False
+                    elif attr == 'disabled' and value:
+                        print(f"[DEBUG] widget explicitly disabled: disabled={value}")
+                        return False
+            
+            # Check if action is actually callable/valid
+            if action_value:
+                # Check for Ren'Py action validity using get_sensitive method
+                try:
+                    if hasattr(action_value, 'get_sensitive'):
+                        try:
+                            sensitive = action_value.get_sensitive()
+                            # print(f"[DEBUG] action.get_sensitive() = {sensitive} for {action_value}")  # Reduce debug output
+                            if sensitive is False:  # Explicitly False, not just falsy
+                                # print(f"[DEBUG] action not sensitive: {action_value}")  # Reduce debug output
+                                return False
+                        except Exception as e:
+                            # print(f"[DEBUG] error calling get_sensitive(): {e}")  # Reduce debug output
+                            # If get_sensitive() fails, assume enabled
+                            pass
+                            
+                except Exception as e:
+                    print(f"[DEBUG] error checking action validity: {e}")
+                    # If we can't determine, assume it's enabled
+                    pass
+            
+            # If we get here and haven't found any reason it's disabled, assume enabled
+            return True
+            
+        except Exception as e:
+            print(f"[DEBUG] error in _check_widget_enabled: {e}")
+            # Default to enabled if we can't determine
+            return True
     
     def get_context_info(self):
         """
@@ -573,3 +1275,178 @@ class StateInspector(object):
             return rollback_info
         except Exception:
             return {'can_rollback': False, 'rollback_length': 0, 'current_checkpoint': 0}
+    
+    def get_ui_interactables(self):
+        """
+        Get all UI interactables (buttons, clickable elements) using the focus system.
+        
+        Returns:
+            list: List of interactable UI elements with their properties
+        """
+        try:
+            interactables = []
+            print("[DEBUG] Getting UI interactables using focus system")
+            
+            # Method 1: Use focus system to get all focusable elements
+            try:
+                import renpy.display.focus as focus
+                
+                # Get current focus list
+                if hasattr(focus, 'focus_list') and focus.focus_list:
+                    print(f"[DEBUG] Found {len(focus.focus_list)} items in focus_list")
+                    for i, focus_item in enumerate(focus.focus_list):
+                        if hasattr(focus_item, 'widget') and focus_item.widget:
+                            widget = focus_item.widget
+                            widget_info = {
+                                'index': i,
+                                'type': type(widget).__name__,
+                                'focusable': True
+                            }
+                            
+                            # Get bounding box if available
+                            if hasattr(focus_item, 'x') and hasattr(focus_item, 'y'):
+                                widget_info['bounds'] = {
+                                    'x': focus_item.x,
+                                    'y': focus_item.y,
+                                    'w': getattr(focus_item, 'w', 0),
+                                    'h': getattr(focus_item, 'h', 0)
+                                }
+                            
+                            # Get text content
+                            text = self._extract_widget_text(widget)
+                            if text:
+                                widget_info['text'] = text
+                            
+                            # Get action/click handlers
+                            for attr in ['clicked', 'action', 'activate', 'hovered']:
+                                if hasattr(widget, attr):
+                                    action_value = getattr(widget, attr)
+                                    if action_value:
+                                        widget_info[attr] = str(action_value)
+                                        break
+                            
+                            # Get screen context if available
+                            if hasattr(focus_item, 'screen'):
+                                widget_info['screen'] = str(focus_item.screen)
+                                
+                            interactables.append(widget_info)
+                
+                # Method 2: Also check renpy.display.screen for active screens
+                if hasattr(renpy.display, 'screen'):
+                    screen_module = renpy.display.screen
+                    if hasattr(screen_module, 'screens'):
+                        active_screens = screen_module.screens
+                        print(f"[DEBUG] Found {len(active_screens)} active screens")
+                        for screen_name, screen_obj in active_screens.items():
+                            print(f"[DEBUG] Processing screen: {screen_name}")
+                            # Try to extract widgets from screen
+                            screen_widgets = self._extract_screen_widgets(screen_obj, screen_name)
+                            interactables.extend(screen_widgets)
+                            
+            except Exception as e:
+                print(f"[DEBUG] Error in focus system method: {e}")
+            
+            # Method 3: Fall back to scene_lists method if focus system didn't work
+            if not interactables:
+                print("[DEBUG] No interactables found via focus system, trying scene_lists method")
+                scene_lists = renpy.exports.scene_lists()
+                if scene_lists and hasattr(scene_lists, 'layers'):
+                    for layer_name, layer_list in scene_lists.layers.items():
+                        if layer_name == 'screens':  # Focus on screens layer
+                            for sle in layer_list:
+                                if hasattr(sle, 'displayable'):
+                                    displayable = sle.displayable
+                                    if hasattr(displayable, 'screen_name'):
+                                        screen_name = displayable.screen_name
+                                        if isinstance(screen_name, tuple):
+                                            screen_name = screen_name[0]
+                                        print(f"[DEBUG] Processing screen: {screen_name}")
+                                        screen_widgets = self._extract_screen_widgets_from_displayable(displayable, screen_name)
+                                        interactables.extend(screen_widgets)
+            
+            print(f"[DEBUG] Total interactables found: {len(interactables)}")
+            return interactables
+            
+        except Exception as e:
+            print(f"[DEBUG] Exception in get_ui_interactables: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
+    def _extract_screen_widgets(self, screen_obj, screen_name):
+        """Extract widgets from a screen object."""
+        widgets = []
+        try:
+            # This would need to be implemented based on the actual screen object structure
+            # For now, return empty list as we'll use the displayable method
+            print(f"[DEBUG] _extract_screen_widgets for {screen_name} - not implemented")
+        except Exception as e:
+            print(f"[DEBUG] Error extracting widgets from screen {screen_name}: {e}")
+        return widgets
+    
+    def _extract_screen_widgets_from_displayable(self, screen_displayable, screen_name):
+        """Extract interactive widgets from a screen displayable."""
+        widgets = []
+        try:
+            print(f"[DEBUG] Extracting widgets from screen displayable: {screen_name}")
+            
+            def traverse_widgets(widget, depth=0):
+                indent = "  " * depth
+                widget_type = type(widget).__name__
+                print(f"[DEBUG] {indent}Widget: {widget_type}")
+                
+                # Check if this widget is interactive
+                is_interactive = False
+                action_info = {}
+                
+                for attr in ['clicked', 'action', 'activate', 'hovered']:
+                    if hasattr(widget, attr):
+                        action_value = getattr(widget, attr)
+                        if action_value:
+                            is_interactive = True
+                            action_info[attr] = str(action_value)
+                            print(f"[DEBUG] {indent}  Found action {attr}: {action_value}")
+                
+                if is_interactive:
+                    widget_info = {
+                        'type': widget_type,
+                        'screen': screen_name,
+                        'actions': action_info
+                    }
+                    
+                    # Get text content
+                    text = self._extract_widget_text(widget)
+                    if text:
+                        widget_info['text'] = text
+                        print(f"[DEBUG] {indent}  Text: {text}")
+                    
+                    # Get enabled/sensitive state
+                    if hasattr(widget, 'sensitive'):
+                        widget_info['enabled'] = widget.sensitive
+                    
+                    widgets.append(widget_info)
+                
+                # Recursively check children
+                if hasattr(widget, 'children') and widget.children:
+                    for child in widget.children:
+                        if child:
+                            traverse_widgets(child, depth + 1)
+                elif hasattr(widget, 'child') and widget.child:
+                    traverse_widgets(widget.child, depth + 1)
+            
+            # Start traversal from the screen displayable
+            if hasattr(screen_displayable, 'child'):
+                traverse_widgets(screen_displayable.child)
+            elif hasattr(screen_displayable, 'children'):
+                for child in screen_displayable.children:
+                    if child:
+                        traverse_widgets(child)
+            else:
+                traverse_widgets(screen_displayable)
+                
+        except Exception as e:
+            print(f"[DEBUG] Error in _extract_screen_widgets_from_displayable: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return widgets

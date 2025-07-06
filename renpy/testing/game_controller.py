@@ -39,11 +39,12 @@ class GameController(object):
     Provides methods to programmatically control game progression.
     """
     
-    def __init__(self):
+    def __init__(self, testing_interface=None):
         """Initialize the game controller."""
         self._auto_advance_enabled = False
         self._auto_advance_delay = 0.1
         self._skip_transitions = False
+        self.testing_interface = testing_interface
     
     def advance_dialogue(self):
         """
@@ -99,25 +100,134 @@ class GameController(object):
             bool: True if selection was successful
         """
         try:
-            # This is a simplified implementation
-            # In practice, we'd need to hook into the menu system more deeply
-            # to identify and select specific choices
+            # Get current choices from the testing interface
+            if self.testing_interface:
+                choices = self.testing_interface.get_choices()
+            else:
+                # Fallback if no testing interface available
+                from . import state_inspector
+                inspector = state_inspector.StateInspector()
+                choices = inspector.get_choices()
+            print(f"[DEBUG] Found {len(choices)} choices available")
             
             if isinstance(choice, int):
-                # Select by index - post keyboard event
-                key = pygame.K_1 + choice if choice < 9 else None
-                if key:
-                    event = pygame.event.Event(pygame.KEYDOWN, {'key': key})
-                    pygame.event.post(event)
-                    return True
+                # Select by index
+                if 0 <= choice < len(choices):
+                    choice_data = choices[choice]
+                    print(f"[DEBUG] Selected choice {choice}: {choice_data.get('label', 'unknown')}")
+                    return self._invoke_choice_action(choice_data)
+                else:
+                    print(f"[DEBUG] Choice index {choice} out of range (0-{len(choices)-1})")
+                    return False
+                    
             elif isinstance(choice, str):
-                # Select by text - would need more complex implementation
-                # to find the choice and click on it
-                pass
+                # Select by text - find matching choice
+                for choice_data in choices:
+                    if choice_data.get('label') == choice:
+                        return self._invoke_choice_action(choice_data)
+                print(f"[DEBUG] Choice with label '{choice}' not found")
+                return False
             
             return False
             
-        except Exception:
+        except Exception as e:
+            print(f"[DEBUG] Error in select_choice: {e}")
+            return False
+    
+    def _invoke_choice_action(self, choice_data):
+        """
+        Invoke the action for a specific choice.
+        
+        Args:
+            choice_data (dict): Choice information including action
+            
+        Returns:
+            bool: True if action was successfully invoked
+        """
+        try:
+            # Check if choice is enabled
+            if not choice_data.get('enabled', True):
+                print(f"[DEBUG] Choice '{choice_data.get('label')}' is disabled")
+                return False
+            
+            action_str = choice_data.get('action', '')
+            label = choice_data.get('label', 'unknown')
+            
+            print(f"[DEBUG] Attempting to invoke action for '{label}': {action_str}")
+            
+            # Method 1: Try to invoke the action directly if we can parse it
+            if 'store.' in action_str:
+                try:
+                    # Extract the action object reference and try to access it
+                    # This is a complex approach - let's try a simpler method first
+                    pass
+                except Exception as e:
+                    print(f"[DEBUG] Could not directly invoke action: {e}")
+            
+            # Method 2: Try using mouse click on the button location
+            # This is more reliable for UI buttons
+            return self._click_choice_button(choice_data)
+            
+        except Exception as e:
+            print(f"[DEBUG] Error invoking choice action: {e}")
+            return False
+    
+    def _click_choice_button(self, choice_data):
+        """
+        Try to click on the button using mouse simulation.
+        
+        Args:
+            choice_data (dict): Choice information
+            
+        Returns:
+            bool: True if click was attempted
+        """
+        try:
+            label = choice_data.get('label', '')
+            print(f"[DEBUG] Attempting to activate '{label}' button")
+            
+            # For quick menu items, right-click is the most reliable way to access the game menu
+            # This should open the appropriate screen for most quick menu actions
+            if choice_data.get('screen') == 'quick_menu':
+                print(f"[DEBUG] Quick menu item '{label}' - using right-click")
+                
+                # Right-click usually opens the game menu which includes save/load/preferences
+                event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, {
+                    'button': 3,  # Right mouse button
+                    'pos': (640, 360)  # Center of typical screen
+                })
+                pygame.event.post(event)
+                return True
+            
+            # For other screens, try keyboard shortcuts first
+            shortcuts = {
+                'History': ord('h'),
+                'Save': ord('s'),
+                'Auto': ord('a'),
+                'Skip': 306,  # LCTRL key
+                'Prefs': ord('p'),
+                'Q.Save': 293,  # F5
+                'Q.Load': 297,  # F9
+            }
+            
+            if label in shortcuts:
+                key = shortcuts[label]
+                print(f"[DEBUG] Using keyboard shortcut for '{label}': {key}")
+                event = pygame.event.Event(pygame.KEYDOWN, {'key': key})
+                pygame.event.post(event)
+                return True
+            
+            # Fallback: try left-click in center of screen
+            print(f"[DEBUG] No specific method for '{label}', trying left-click")
+            event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, {
+                'button': 1,  # Left mouse button
+                'pos': (640, 360)  # Center of typical screen
+            })
+            pygame.event.post(event)
+            return True
+            
+        except Exception as e:
+            print(f"[DEBUG] Error clicking choice button: {e}")
             return False
     
     def jump_to_label(self, label):

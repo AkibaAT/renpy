@@ -652,6 +652,14 @@ class Context(renpy.object.Object):
                 try:
                     check_infinite_loop()
 
+                    # Check for breakpoints (clean debugger implementation)
+                    if hasattr(renpy, 'testing'):
+                        try:
+                            from renpy.testing.debugger import check_breakpoint
+                            check_breakpoint(node)
+                        except ImportError:
+                            pass
+
                     if tracing:
                         self.report_coverage(node)
 

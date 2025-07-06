@@ -272,6 +272,33 @@ original_developer = False
 # The default value of developer that's used when it's set to auto.
 default_developer = False
 
+# Debugging and breakpoint configuration
+
+# Enable debugging/breakpoint functionality
+debug_enabled = False
+
+# Auto-enable debug mode when developer mode is enabled
+debug_auto_enable = True
+
+# Maximum number of breakpoints allowed (to prevent memory issues)
+debug_max_breakpoints = 1000
+
+# Default timeout for breakpoint pauses (in seconds, 0 = no timeout)
+debug_breakpoint_timeout = 0
+
+# Enable conditional breakpoints (can be disabled for performance)
+debug_conditional_breakpoints = True
+
+# Log breakpoint hits to console
+debug_log_breakpoints = False
+
+# Default host/port for debug HTTP server
+debug_http_host = "localhost"
+debug_http_port = 8080
+
+# Auto-start HTTP server when debug mode is enabled
+debug_auto_start_http = False
+
 # A logfile that logging messages are sent to.
 log = None
 
