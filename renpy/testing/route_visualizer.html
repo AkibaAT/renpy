@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ren'Py Route Visualizer</title>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .header {
+            background-color: #2c3e50;
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        
+        .controls {
+            background-color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .controls button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin-right: 10px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        .controls button:hover {
+            background-color: #2980b9;
+        }
+        
+        .controls button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        .zoom-control {
+            display: inline-block;
+            margin-left: 20px;
+            vertical-align: middle;
+        }
+
+        .zoom-control label {
+            margin-right: 10px;
+            font-weight: bold;
+        }
+
+        .zoom-slider {
+            width: 150px;
+            margin: 0 10px;
+            vertical-align: middle;
+        }
+
+        .zoom-value {
+            font-weight: bold;
+            color: #3498db;
+            min-width: 40px;
+            display: inline-block;
+        }
+        
+        .status {
+            margin-left: 10px;
+            font-weight: bold;
+        }
+        
+        .status.loading {
+            color: #f39c12;
+        }
+        
+        .status.success {
+            color: #27ae60;
+        }
+        
+        .status.error {
+            color: #e74c3c;
+        }
+        
+        .graph-container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        #route-graph {
+            width: 100%;
+            height: 600px;
+            border: 1px solid #ddd;
+        }
+        
+        .info-panel {
+            background-color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .info-panel h3 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        
+        .stats {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .stat-item {
+            background-color: #ecf0f1;
+            padding: 10px 15px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #7f8c8d;
+            text-transform: uppercase;
+        }
+        
+        .legend {
+            margin-top: 15px;
+        }
+        
+        .legend-item {
+            display: inline-block;
+            margin-right: 20px;
+            margin-bottom: 5px;
+        }
+        
+        .legend-color {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        
+        .error-message {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 4px;
+            border: 1px solid #f5c6cb;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎮 Ren'Py Route Visualizer</h1>
+        <p>Interactive visualization of your visual novel's route structure</p>
+    </div>
+    
+    <div class="controls">
+        <button id="refresh-btn" onclick="loadRouteGraph()">🔄 Refresh Graph</button>
+        <button id="fit-btn" onclick="fitGraph()" disabled>📐 Fit to Screen</button>
+        <button id="reset-btn" onclick="resetView()" disabled>🔄 Reset View</button>
+
+        <div class="zoom-control">
+            <label for="zoom-slider">🔍 Zoom:</label>
+            <input type="range" id="zoom-slider" class="zoom-slider"
+                   min="0.1" max="3" step="0.1" value="1"
+                   oninput="setZoom(this.value)" disabled>
+            <span id="zoom-value" class="zoom-value">100%</span>
+        </div>
+
+        <span id="status" class="status">Ready</span>
+    </div>
+    
+    <div class="graph-container">
+        <div id="route-graph"></div>
+    </div>
+    
+    <div class="info-panel">
+        <h3>📊 Route Statistics</h3>
+        <div id="stats" class="stats">
+            <div class="stat-item">
+                <div class="stat-value" id="total-labels">-</div>
+                <div class="stat-label">Labels</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="total-choices">-</div>
+                <div class="stat-label">Choice Points</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="total-words">-</div>
+                <div class="stat-label">Total Words</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="total-connections">-</div>
+                <div class="stat-label">Connections</div>
+            </div>
+        </div>
+        
+        <div class="legend">
+            <h4>Legend:</h4>
+            <div class="legend-item">
+                <span class="legend-color" style="background-color: #3498db;"></span>
+                <span>Label</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background-color: #e74c3c;"></span>
+                <span>Choice Menu</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background-color: #9b59b6;"></span>
+                <span>Screen</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background-color: #f39c12;"></span>
+                <span>Start Label</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let network = null;
+        let nodes = null;
+        let edges = null;
+        
+        const API_BASE = '/api';
+        
+        function setStatus(message, type = '') {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = 'status ' + type;
+        }
+        
+        function setButtonsEnabled(enabled) {
+            document.getElementById('refresh-btn').disabled = !enabled;
+            document.getElementById('fit-btn').disabled = !enabled || !network;
+            document.getElementById('reset-btn').disabled = !enabled || !network;
+            document.getElementById('zoom-slider').disabled = !enabled || !network;
+        }
+        
+        async function loadRouteGraph() {
+            setStatus('Loading route graph...', 'loading');
+            setButtonsEnabled(false);
+
+            try {
+                // Add timeout to prevent hanging
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
+                const response = await fetch(`${API_BASE}/route/graph`, {
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+
+                // Validate response data
+                if (!data || !data.route_graph || !data.route_graph.nodes) {
+                    throw new Error('Invalid response format from server');
+                }
+
+                renderGraph(data);
+                updateStats(data);
+                setStatus('Graph loaded successfully!', 'success');
+
+            } catch (error) {
+                console.error('Error loading route graph:', error);
+                if (error.name === 'AbortError') {
+                    setStatus('Request timed out', 'error');
+                    showError('Request timed out. The server may be overloaded or unresponsive.');
+                } else {
+                    setStatus('Error loading graph', 'error');
+                    showError(`Failed to load route graph: ${error.message}`);
+                }
+            } finally {
+                setButtonsEnabled(true);
+            }
+        }
+        
+        function renderGraph(data) {
+            try {
+                const container = document.getElementById('route-graph');
+
+                // Validate data structure
+                if (!data.route_graph || !data.route_graph.nodes || !data.route_graph.edges) {
+                    throw new Error('Invalid graph data structure');
+                }
+
+                // Check for empty graph
+                if (data.route_graph.nodes.length === 0) {
+                    showError('No route data found. The game may not have started or the script may be empty.');
+                    return;
+                }
+
+                // Store current view position and zoom if network exists
+                let currentPosition = null;
+                let currentScale = null;
+                if (network) {
+                    try {
+                        currentPosition = network.getViewPosition();
+                        currentScale = network.getScale();
+                    } catch (e) {
+                        console.warn('Could not get current view state:', e);
+                    }
+                }
+
+                // Convert API data to vis.js format with error handling
+                const visNodes = data.route_graph.nodes.map(node => {
+                    try {
+                        return {
+                            id: node.id || 'unknown',
+                            label: node.name || 'Unknown',
+                            title: `${node.name || 'Unknown'}\n${node.filename || 'unknown'}:${node.line || 0}`,
+                            color: getNodeColor(node),
+                            font: { size: 12 },
+                            shape: node.type === 'menu' ? 'diamond' : 'box'
+                        };
+                    } catch (e) {
+                        console.warn('Error processing node:', node, e);
+                        return {
+                            id: 'error-node',
+                            label: 'Error',
+                            color: '#ff0000'
+                        };
+                    }
+                });
+
+                const visEdges = data.route_graph.edges.map((edge, index) => {
+                    try {
+                        return {
+                            id: index,
+                            from: edge.from,
+                            to: edge.to,
+                            label: edge.choice_text || edge.type || '',
+                            color: getEdgeColor(edge),
+                            arrows: 'to',
+                            font: { size: 10 }
+                        };
+                    } catch (e) {
+                        console.warn('Error processing edge:', edge, e);
+                        return {
+                            id: index,
+                            from: 'error',
+                            to: 'error',
+                            color: '#ff0000'
+                        };
+                    }
+                });
+
+                const newNodes = new vis.DataSet(visNodes);
+                const newEdges = new vis.DataSet(visEdges);
+
+                const graphData = { nodes: newNodes, edges: newEdges };
+            
+                // If network doesn't exist, create it
+                if (!network) {
+                    const options = {
+                        layout: {
+                            hierarchical: {
+                                enabled: true,
+                                direction: 'UD',
+                                sortMethod: 'directed',
+                                levelSeparation: 150,
+                                nodeSpacing: 200
+                            }
+                        },
+                        physics: {
+                            enabled: false
+                        },
+                        interaction: {
+                            dragNodes: true,
+                            dragView: true,
+                            zoomView: true,
+                            zoomSpeed: 0.1  // Much slower zoom (default is 1)
+                        },
+                        nodes: {
+                            borderWidth: 2,
+                            shadow: true,
+                            margin: 10
+                        },
+                        edges: {
+                            smooth: {
+                                type: 'cubicBezier',
+                                forceDirection: 'vertical',
+                                roundness: 0.4
+                            }
+                        }
+                    };
+                    
+                    network = new vis.Network(container, graphData, options);
+                    
+                    // Add event handlers only once
+                    // Add click handler for nodes
+                    network.on('click', function(params) {
+                        if (params.nodes.length > 0) {
+                            const nodeId = params.nodes[0];
+                            const node = data.route_graph.nodes.find(n => n.id === nodeId);
+                            if (node) {
+                                showNodeInfo(node);
+                            }
+                        }
+                    });
+
+                    // Add zoom change handler to update slider
+                    network.on('zoom', function(params) {
+                        updateZoomSlider(params.scale);
+                    });
+                } else {
+                    // Update existing network data while preserving view
+                    nodes = newNodes;
+                    edges = newEdges;
+                    network.setData(graphData);
+                    
+                    // Restore previous view position and zoom if available
+                    if (currentPosition && currentScale) {
+                        setTimeout(() => {
+                            try {
+                                network.moveTo({
+                                    position: currentPosition,
+                                    scale: currentScale
+                                });
+                                updateZoomSlider(currentScale);
+                            } catch (e) {
+                                console.warn('Could not restore view state:', e);
+                            }
+                        }, 100); // Small delay to ensure network is ready
+                    }
+                }
+
+                // Store references for other functions
+                nodes = newNodes;
+                edges = newEdges;
+
+            } catch (error) {
+                console.error('Error rendering graph:', error);
+                showError(`Failed to render route graph: ${error.message}`);
+            }
+        }
+        
+        function getNodeColor(node) {
+            if (node.name === 'start') return '#f39c12'; // Orange for start
+            if (node.type === 'menu') return '#e74c3c'; // Red for choice menus
+            if (node.type === 'screen') return '#9b59b6'; // Purple for screens
+            return '#3498db'; // Blue for regular labels
+        }
+        
+        function getEdgeColor(edge) {
+            switch (edge.type) {
+                case 'choice': return '#e74c3c';
+                case 'jump': return '#f39c12';
+                case 'call': return '#9b59b6';
+                case 'screen_choice': return '#9b59b6'; // Purple for screen choices
+                case 'call_screen': return '#8e44ad'; // Darker purple for screen calls
+                default: return '#95a5a6';
+            }
+        }
+        
+        function updateStats(data) {
+            document.getElementById('total-labels').textContent = data.metadata.total_labels;
+            document.getElementById('total-choices').textContent = data.metadata.total_choices;
+            document.getElementById('total-words').textContent = data.metadata.total_words;
+            document.getElementById('total-connections').textContent = data.route_graph.edges.length;
+        }
+        
+        function fitGraph() {
+            if (network) {
+                network.fit();
+                // The zoom event will automatically update the slider
+            }
+        }
+        
+        function resetView() {
+            if (network) {
+                network.moveTo({
+                    position: { x: 0, y: 0 },
+                    scale: 1.0
+                });
+                updateZoomSlider(1.0);
+            }
+        }
+
+        function setZoom(zoomLevel) {
+            if (network) {
+                const currentPosition = network.getViewPosition();
+                network.moveTo({
+                    position: currentPosition,
+                    scale: parseFloat(zoomLevel)
+                });
+                updateZoomDisplay(zoomLevel);
+            }
+        }
+
+        function updateZoomSlider(scale) {
+            const slider = document.getElementById('zoom-slider');
+            const value = Math.max(0.1, Math.min(3, scale));
+            slider.value = value;
+            updateZoomDisplay(value);
+        }
+
+        function updateZoomDisplay(zoomLevel) {
+            const percentage = Math.round(zoomLevel * 100);
+            document.getElementById('zoom-value').textContent = percentage + '%';
+        }
+        
+        function showNodeInfo(node) {
+            alert(`Label: ${node.name}\nFile: ${node.filename}\nLine: ${node.line}\nType: ${node.type}`);
+        }
+        
+        function showError(message) {
+            const container = document.getElementById('route-graph');
+            container.innerHTML = `<div class="error-message">${message}</div>`;
+        }
+        
+        // Auto-load on page load
+        window.addEventListener('load', loadRouteGraph);
+        
+        // No auto-refresh - routes are static during game execution
+        // User can manually refresh if needed
+    </script>
+</body>
+</html>

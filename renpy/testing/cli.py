@@ -286,6 +286,13 @@ def http_server_command():
             print("  POST /api/load       - Load state (body: {\"slot\": \"name\"})")
             print("  POST /api/click      - Send click (body: {\"x\": N, \"y\": N})")
             print("  POST /api/key        - Send key (body: {\"key\": N})")
+            print("\nRoute Analysis endpoints:")
+            print("  GET  /api/route/analyze      - Complete route analysis")
+            print("  GET  /api/route/graph        - Route graph (nodes & edges)")
+            print("  GET  /api/route/progress     - Current progress tracking")
+            print("  GET  /api/route/wordcount    - Word count analysis")
+            print("  GET  /api/route/summary      - Route summary statistics")
+            print("  GET  /api/route/requirements - Choice requirements analysis")
             print("\nServer will run until game exits...")
         else:
             print("Failed to start HTTP API server")

@@ -37,6 +37,8 @@ import hashlib
 import base64
 import struct
 import uuid
+import webbrowser
+import os
 try:
     from http.server import HTTPServer, BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import urlparse, parse_qs
@@ -65,7 +67,8 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
             parsed_url = urlparse(self.path)
             path = parsed_url.path
             query_params = parse_qs(parsed_url.query)
-            
+            print(f"DEBUG: GET request for path: {path}")
+
             # Check for WebSocket upgrade request
             if self.headers.get('Upgrade', '').lower() == 'websocket' and path in ['/ws', '/websocket']:
                 self._handle_websocket_upgrade()
@@ -99,6 +102,25 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
                 self._handle_debug_location()
             elif path == '/api/debug/stack':
                 self._handle_debug_stack()
+            elif path == '/api/route/analyze':
+                self._handle_route_analyze()
+            elif path == '/api/route/graph':
+                print("DEBUG: Routing to route graph handler")
+                self._handle_route_graph()
+            elif path == '/api/route/progress':
+                self._handle_route_progress()
+            elif path == '/api/route/wordcount':
+                self._handle_route_wordcount()
+            elif path == '/api/route/summary':
+                self._handle_route_summary()
+            elif path == '/api/route/requirements':
+                self._handle_route_requirements()
+            elif path == '/api/route/test':
+                self._handle_route_test()
+            elif path == '/visualizer':
+                self._serve_route_visualizer()
+            elif path == '/api/route/open-visualizer':
+                self._open_route_visualizer()
             else:
                 self._send_error(404, "Endpoint not found")
                 
@@ -623,7 +645,277 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
             self._send_json_response({'success': True, 'action': 'step'})
         except Exception as e:
             self._send_error(500, f"Failed to step execution: {str(e)}")
-    
+
+    # Route Analysis Handler Methods
+
+    def _handle_route_analyze(self):
+        """Handle GET /api/route/analyze - get complete route analysis."""
+        try:
+            from renpy.testing.route_analyzer import get_route_analyzer
+            analyzer = get_route_analyzer()
+
+            # Check for force refresh parameter
+            parsed_url = urlparse(self.path)
+            query_params = parse_qs(parsed_url.query)
+            force_refresh = query_params.get('force_refresh', ['false'])[0].lower() == 'true'
+
+            analysis_data = analyzer.analyze_script(force_refresh=force_refresh)
+            self._send_json_response(analysis_data)
+        except Exception as e:
+            self._send_error(500, f"Failed to analyze routes: {str(e)}")
+
+    def _handle_route_graph(self):
+        """Handle GET /api/route/graph - get route graph data."""
+        print("=== ROUTE GRAPH ENDPOINT CALLED ===")
+        try:
+            print("DEBUG: _handle_route_graph called")
+            from renpy.testing.route_analyzer import get_route_analyzer
+            analyzer = get_route_analyzer()
+            print("DEBUG: Got route analyzer")
+
+            analysis_data = analyzer.analyze_script()
+            print(f"DEBUG: Analysis data keys: {list(analysis_data.keys()) if isinstance(analysis_data, dict) else 'not a dict'}")
+
+            # Handle both possible data structures:
+            # 1. Direct nodes/edges structure: {"nodes": [...], "edges": [...]}
+            # 2. Nested structure: {"route_graph": {"nodes": [...], "edges": [...]}}
+            if 'route_graph' in analysis_data:
+                # Nested structure
+                route_graph = analysis_data['route_graph']
+                metadata = analysis_data.get('metadata', {})
+            else:
+                # Direct structure - create the expected nested structure
+                route_graph = {
+                    'nodes': analysis_data.get('nodes', []),
+                    'edges': analysis_data.get('edges', [])
+                }
+                metadata = analysis_data.get('metadata', {})
+
+            # Get summary statistics for metadata if not already present
+            if not metadata or not metadata.get('total_labels'):
+                summary_data = self._get_route_summary_data(analyzer)
+                metadata = {
+                    'total_labels': summary_data.get('total_labels', 0),
+                    'total_choices': summary_data.get('total_choices', 0),
+                    'total_words': summary_data.get('total_words', 0),
+                    'total_menus': summary_data.get('total_menus', 0),
+                    'nodes_count': len(route_graph.get('nodes', [])),
+                    'edges_count': len(route_graph.get('edges', []))
+                }
+
+            print(f"DEBUG: Returning {len(route_graph.get('nodes', []))} nodes and {len(route_graph.get('edges', []))} edges")
+
+            self._send_json_response({
+                'route_graph': route_graph,
+                'metadata': metadata
+            })
+        except Exception as e:
+            print(f"DEBUG: Exception in _handle_route_graph: {e}")
+            import traceback
+            traceback.print_exc()
+            self._send_error(500, f"Failed to get route graph: {str(e)}")
+
+    def _get_route_summary_data(self, analyzer):
+        """Get route summary statistics for metadata."""
+        try:
+            analysis_data = analyzer.analyze_script()
+
+            # Count different types of nodes
+            nodes = analysis_data.get('nodes', [])
+            total_labels = sum(1 for node in nodes if node.get('type') == 'label')
+            total_menus = sum(1 for node in nodes if node.get('type') == 'menu')
+
+            # Count choices from edges
+            edges = analysis_data.get('edges', [])
+            total_choices = sum(1 for edge in edges if edge.get('type') == 'choice')
+
+            return {
+                'total_labels': total_labels,
+                'total_menus': total_menus,
+                'total_choices': total_choices,
+                'total_words': 0,  # Word count not implemented yet
+                'nodes_count': len(nodes),
+                'edges_count': len(edges)
+            }
+        except Exception as e:
+            print(f"DEBUG: Error getting summary data: {e}")
+            return {
+                'total_labels': 0,
+                'total_menus': 0,
+                'total_choices': 0,
+                'total_words': 0,
+                'nodes_count': 0,
+                'edges_count': 0
+            }
+
+    def _handle_route_progress(self):
+        """Handle GET /api/route/progress - get current progress information."""
+        try:
+            from renpy.testing.route_analyzer import get_route_analyzer
+            analyzer = get_route_analyzer()
+
+            # Ensure analysis is done first
+            analyzer.analyze_script()
+            progress_data = analyzer.get_current_progress()
+
+            self._send_json_response(progress_data)
+        except Exception as e:
+            self._send_error(500, f"Failed to get route progress: {str(e)}")
+
+    def _handle_route_wordcount(self):
+        """Handle GET /api/route/wordcount - get word count data."""
+        try:
+            from renpy.testing.route_analyzer import get_route_analyzer
+            analyzer = get_route_analyzer()
+
+            analysis_data = analyzer.analyze_script()
+            word_counts = analysis_data.get('word_counts', {})
+
+            # Calculate additional metrics
+            total_words = sum(word_counts.values()) if word_counts else 0
+            estimated_reading_time = round(total_words / 200.0, 1)  # 200 words per minute
+
+            self._send_json_response({
+                'word_counts': word_counts,
+                'total_words': total_words,
+                'estimated_reading_time_minutes': estimated_reading_time,
+                'labels_with_content': len([label for label, count in word_counts.items() if count > 0])
+            })
+        except Exception as e:
+            self._send_error(500, f"Failed to get word counts: {str(e)}")
+
+    def _handle_route_summary(self):
+        """Handle GET /api/route/summary - get route summary information."""
+        try:
+            from renpy.testing.route_analyzer import get_route_analyzer
+            analyzer = get_route_analyzer()
+
+            # Ensure analysis is done first
+            analyzer.analyze_script()
+            summary_data = analyzer.get_route_summary()
+
+            self._send_json_response(summary_data)
+        except Exception as e:
+            self._send_error(500, f"Failed to get route summary: {str(e)}")
+
+    def _handle_route_requirements(self):
+        """Handle GET /api/route/requirements - get choice requirements data."""
+        try:
+            from renpy.testing.route_analyzer import get_route_analyzer
+            analyzer = get_route_analyzer()
+
+            analysis_data = analyzer.analyze_script()
+            requirements = analysis_data.get('choice_requirements', {})
+
+            # Organize requirements by menu for easier consumption
+            requirements_by_menu = {}
+            for choice_id, req_data in requirements.items():
+                menu_id = req_data.get('menu_id')
+                if menu_id not in requirements_by_menu:
+                    requirements_by_menu[menu_id] = []
+                requirements_by_menu[menu_id].append(req_data)
+
+            self._send_json_response({
+                'choice_requirements': requirements,
+                'requirements_by_menu': requirements_by_menu,
+                'total_conditional_choices': len(requirements)
+            })
+        except Exception as e:
+            self._send_error(500, f"Failed to get choice requirements: {str(e)}")
+
+    def _handle_route_test(self):
+        """Handle route test endpoint."""
+        try:
+            print("DEBUG: Route test endpoint called")
+
+            # Test basic script access
+            script = renpy.game.script
+            print(f"DEBUG: Script object: {script}")
+            print(f"DEBUG: Script type: {type(script)}")
+
+            if script and hasattr(script, 'namemap'):
+                namemap = script.namemap
+                print(f"DEBUG: Namemap type: {type(namemap)}")
+                print(f"DEBUG: Namemap length: {len(namemap) if namemap else 'None'}")
+
+                if namemap:
+                    # Write debug info to a file so we can see it
+                    debug_info = []
+                    debug_info.append("DEBUG: First 10 namemap keys:")
+                    for i, key in enumerate(list(namemap.keys())[:10]):
+                        debug_info.append(f"  {i}: {key} (type: {type(key)})")
+
+                    # Look for string keys that don't start with underscore
+                    string_keys = [k for k in namemap.keys() if isinstance(k, str) and not k.startswith('_')]
+                    debug_info.append(f"DEBUG: Found {len(string_keys)} string keys not starting with '_'")
+                    if string_keys:
+                        debug_info.append("DEBUG: First 10 string keys:")
+                        for i, key in enumerate(string_keys[:10]):
+                            debug_info.append(f"  {i}: {key}")
+
+                    # Write to file
+                    try:
+                        with open('/tmp/renpy_debug.txt', 'w') as f:
+                            f.write('\n'.join(debug_info))
+                        print("DEBUG: Wrote debug info to /tmp/renpy_debug.txt")
+                    except Exception as e:
+                        print(f"DEBUG: Failed to write debug file: {e}")
+
+                    # Also print to console
+                    for line in debug_info:
+                        print(line)
+
+            response = {
+                "test": "success",
+                "script_available": script is not None,
+                "namemap_available": hasattr(script, 'namemap') if script else False,
+                "namemap_length": len(script.namemap) if script and hasattr(script, 'namemap') and script.namemap else 0
+            }
+
+            self._send_json_response(response)
+        except Exception as e:
+            print(f"DEBUG: Route test error: {str(e)}")
+            self._send_error(500, f"Route test error: {str(e)}")
+
+    def _serve_route_visualizer(self):
+        """Serve the route visualizer HTML page."""
+        try:
+            # Get the path to the HTML file
+            import renpy
+            visualizer_path = os.path.join(renpy.config.renpy_base, "renpy", "testing", "route_visualizer.html")
+
+            if os.path.exists(visualizer_path):
+                with open(visualizer_path, 'r', encoding='utf-8') as f:
+                    html_content = f.read()
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Cache-Control', 'no-cache')
+                self.end_headers()
+                self.wfile.write(html_content.encode('utf-8'))
+            else:
+                self._send_error(404, "Route visualizer not found")
+        except Exception as e:
+            self._send_error(500, f"Failed to serve visualizer: {str(e)}")
+
+    def _open_route_visualizer(self):
+        """Open the route visualizer in the default browser."""
+        try:
+            # Get the server URL
+            server_url = f"http://{self.server.server_address[0]}:{self.server.server_address[1]}"
+            visualizer_url = f"{server_url}/visualizer"
+
+            # Open in browser
+            webbrowser.open(visualizer_url)
+
+            self._send_json_response({
+                'success': True,
+                'url': visualizer_url,
+                'message': 'Route visualizer opened in browser'
+            })
+        except Exception as e:
+            self._send_error(500, f"Failed to open visualizer: {str(e)}")
+
     def _handle_websocket_upgrade(self):
         """Handle WebSocket upgrade request."""
         try:
@@ -942,6 +1234,19 @@ class TestingHTTPServer(object):
             
             print("Testing API server started on http://{}:{}".format(self.host, self.port))
             print("WebSocket endpoint available at ws://{}:{}/ws".format(self.host, self.port))
+
+            # Enable developer shortcuts
+            try:
+                from renpy.testing.dev_shortcuts import enable_dev_shortcuts, register_dev_actions
+                enable_dev_shortcuts(self.port)
+                register_dev_actions()
+                print("")
+                print("🎮 Developer Shortcuts Enabled:")
+                print("  Ctrl+Shift+R - Open Route Visualizer")
+                print("  Ctrl+Shift+D - Toggle Dev Shortcuts")
+            except Exception as e:
+                print("Failed to enable developer shortcuts: {}".format(e))
+
             return True
             
         except Exception as e:
