@@ -40,6 +40,7 @@ from . import headless
 from . import cli
 from . import http_server
 from . import debugger
+from . import route_analyzer
 
 # Main testing interface instance
 _testing_interface = None
@@ -124,6 +125,42 @@ def is_http_server_running():
 def get_http_server_url():
     """Get the HTTP API server URL."""
     return get_testing_interface().get_http_server_url()
+
+# Route Analysis Functions
+def analyze_routes(force_refresh=False):
+    """Analyze script routes and return complete analysis data."""
+    return route_analyzer.get_route_analyzer().analyze_script(force_refresh)
+
+def get_route_graph():
+    """Get route graph with nodes and edges."""
+    analysis = route_analyzer.get_route_analyzer().analyze_script()
+    return analysis.get('route_graph', {'nodes': [], 'edges': []})
+
+def get_route_progress():
+    """Get current progress through the script."""
+    analyzer = route_analyzer.get_route_analyzer()
+    analyzer.analyze_script()  # Ensure analysis is done
+    return analyzer.get_current_progress()
+
+def get_word_counts():
+    """Get word count analysis for all labels."""
+    analysis = route_analyzer.get_route_analyzer().analyze_script()
+    return analysis.get('word_counts', {})
+
+def get_choice_requirements():
+    """Get choice requirements and conditions."""
+    analysis = route_analyzer.get_route_analyzer().analyze_script()
+    return analysis.get('choice_requirements', {})
+
+def get_route_summary():
+    """Get summary statistics about the script routes."""
+    analyzer = route_analyzer.get_route_analyzer()
+    analyzer.analyze_script()  # Ensure analysis is done
+    return analyzer.get_route_summary()
+
+def invalidate_route_cache():
+    """Invalidate route analysis cache to force re-analysis."""
+    return route_analyzer.get_route_analyzer().invalidate_cache()
 
 # Debugging and Breakpoint Functions
 def enable_debug_mode():
