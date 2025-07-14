@@ -184,6 +184,15 @@ class ArgumentParser(argparse.ArgumentParser):
             help="Include names defined in the common directory.",
         )
 
+        # API server arguments
+        self.add_argument(
+            '--api', dest='api', action='store_true', default=False,
+            help="If present, Ren'Py will start the HTTP API server for external testing tools.")
+
+        self.add_argument(
+            '--port', dest='port', type=int, default=8080,
+            help="The port number for the HTTP API server (default: 8080).")
+
         if second_pass:
             self.add_argument("-h", "--help", action="help", help="Displays this help message, then exits.")
 

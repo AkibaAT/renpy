@@ -246,19 +246,12 @@ def http_server_command():
     """
     Command to start HTTP API server for external testing control.
     """
-    ap = renpy.arguments.ArgumentParser(description="Start HTTP API server for testing.")
-
-    ap.add_argument("--host", type=str, default="localhost",
-                   help="Host to bind to (default: localhost)")
-    ap.add_argument("--port", type=int, default=8080,
-                   help="Port to bind to (default: 8080)")
-    ap.add_argument("--headless", action="store_true",
-                   help="Run in headless mode")
-
-    args = ap.parse_args()
+    # Use the existing parsed arguments instead of creating a new parser
+    # to avoid conflicts with already defined arguments
+    args = renpy.game.args
 
     # Enable headless mode if requested
-    if args.headless:
+    if hasattr(args, 'headless') and args.headless:
         headless.enable_headless()
 
     # Configure for testing (auto-advance disabled by default for HTTP server)
@@ -268,32 +261,40 @@ def http_server_command():
         from . import get_testing_interface
         interface = get_testing_interface()
 
-        if interface.start_http_server(args.host, args.port):
-            print("HTTP API server started at http://{}:{}".format(args.host, args.port))
-            print("API endpoints available:")
-            print("  GET  /api/status     - Get server status")
-            print("  GET  /api/state      - Get full game state")
-            print("  GET  /api/variables  - Get game variables")
-            print("  GET  /api/scene      - Get scene information")
-            print("  GET  /api/dialogue   - Get dialogue information")
-            print("  GET  /api/choices    - Get available choices")
-            print("  POST /api/advance    - Advance dialogue")
-            print("  POST /api/rollback   - Roll back (body: {\"steps\": N})")
-            print("  POST /api/choice     - Select choice (body: {\"choice\": N})")
-            print("  POST /api/jump       - Jump to label (body: {\"label\": \"name\"})")
-            print("  POST /api/variable   - Set variable (body: {\"name\": \"var\", \"value\": val})")
-            print("  POST /api/save       - Save state (body: {\"slot\": \"name\"})")
-            print("  POST /api/load       - Load state (body: {\"slot\": \"name\"})")
-            print("  POST /api/click      - Send click (body: {\"x\": N, \"y\": N})")
-            print("  POST /api/key        - Send key (body: {\"key\": N})")
-            print("\nRoute Analysis endpoints:")
-            print("  GET  /api/route/analyze      - Complete route analysis")
-            print("  GET  /api/route/graph        - Route graph (nodes & edges)")
-            print("  GET  /api/route/progress     - Current progress tracking")
-            print("  GET  /api/route/wordcount    - Word count analysis")
-            print("  GET  /api/route/summary      - Route summary statistics")
-            print("  GET  /api/route/requirements - Choice requirements analysis")
-            print("\nServer will run until game exits...")
+        host = getattr(args, 'host', 'localhost')
+        port = getattr(args, 'port', 8080)
+
+        # Check if server is already running to avoid duplicate welcome messages
+        server_already_running = interface.is_http_server_running()
+
+        if interface.start_http_server(host, port):
+            # Only print welcome message if this is a fresh server start
+            if not server_already_running:
+                print("HTTP API server started at http://{}:{}".format(host, port))
+                print("API endpoints available:")
+                print("  GET  /api/status     - Get server status")
+                print("  GET  /api/state      - Get full game state")
+                print("  GET  /api/variables  - Get game variables")
+                print("  GET  /api/scene      - Get scene information")
+                print("  GET  /api/dialogue   - Get dialogue information")
+                print("  GET  /api/choices    - Get available choices")
+                print("  POST /api/advance    - Advance dialogue")
+                print("  POST /api/rollback   - Roll back (body: {\"steps\": N})")
+                print("  POST /api/choice     - Select choice (body: {\"choice\": N})")
+                print("  POST /api/jump       - Jump to label (body: {\"label\": \"name\"})")
+                print("  POST /api/variable   - Set variable (body: {\"name\": \"var\", \"value\": val})")
+                print("  POST /api/save       - Save state (body: {\"slot\": \"name\"})")
+                print("  POST /api/load       - Load state (body: {\"slot\": \"name\"})")
+                print("  POST /api/click      - Send click (body: {\"x\": N, \"y\": N})")
+                print("  POST /api/key        - Send key (body: {\"key\": N})")
+                print("\nRoute Analysis endpoints:")
+                print("  GET  /api/route/analyze      - Complete route analysis")
+                print("  GET  /api/route/graph        - Route graph (nodes & edges)")
+                print("  GET  /api/route/progress     - Current progress tracking")
+                print("  GET  /api/route/wordcount    - Word count analysis")
+                print("  GET  /api/route/summary      - Route summary statistics")
+                print("  GET  /api/route/requirements - Choice requirements analysis")
+                print("\nServer will run until game exits...")
         else:
             print("Failed to start HTTP API server")
             return False

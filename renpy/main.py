@@ -576,6 +576,26 @@ def main():
         renpy.translation.init_translation()
         log_clock("Init translation")
 
+        # Check for API server startup
+        if (hasattr(renpy.game.args, 'api') and renpy.game.args.api) or "--http-server" in sys.argv:
+            try:
+                # Get port from parsed arguments or default
+                if hasattr(renpy.game.args, 'port'):
+                    port = renpy.game.args.port
+                else:
+                    port = 8080
+
+                # Start the API server
+                from renpy import testing
+                testing.start_http_server(port=port)
+                print(f"API server started at http://localhost:{port}")
+
+            except ImportError:
+                if hasattr(renpy.game.args, 'api') and renpy.game.args.api:
+                    print("Warning: API server not available in this build")
+            except Exception as e:
+                print(f"Warning: Failed to start API server: {e}")
+
         # Start things running.
         restart = None
 

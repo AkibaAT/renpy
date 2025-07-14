@@ -35,8 +35,139 @@ init python in project:
     import subprocess
     import re
     import tempfile
+    import socket
 
     multipersistent = MultiPersistent("launcher.renpy.org")
+
+    def find_available_port(start_port=8080, max_attempts=100):
+        """
+        Find the next available port starting from start_port.
+
+        Args:
+            start_port: The port to start checking from (default: 8080)
+            max_attempts: Maximum number of ports to check (default: 100)
+
+        Returns:
+            int: The first available port, or None if none found
+        """
+        for port in range(start_port, start_port + max_attempts):
+            try:
+                # Try to bind to the port to see if it's available
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.bind(('localhost', port))
+                    return port
+            except OSError:
+                # Port is in use, try the next one
+                continue
+
+        # No available port found
+        return None
+
+    def is_port_in_use(port):
+        """
+        Check if a port is currently in use.
+
+        Args:
+            port: The port number to check
+
+        Returns:
+            bool: True if port is in use, False otherwise
+        """
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(1)  # 1 second timeout
+                result = sock.connect_ex(('localhost', port))
+                return result == 0  # 0 means connection successful (port in use)
+        except:
+            return False
+
+    # Global dictionary to track active API servers: {project_path: (port, process_info)}
+    _active_api_servers = {}
+
+    def register_api_server(project_path, port, process_info=None):
+        """
+        Register an active API server for a project.
+
+        Args:
+            project_path: The path to the project directory
+            port: The port number the API server is running on
+            process_info: Optional process information for tracking
+        """
+        import os
+        if project_path:
+            project_path = os.path.normpath(os.path.abspath(project_path))
+            _active_api_servers[project_path] = (port, process_info)
+
+    def unregister_api_server(project_path):
+        """
+        Unregister an API server for a project.
+
+        Args:
+            project_path: The path to the project directory
+        """
+        import os
+        if project_path:
+            project_path = os.path.normpath(os.path.abspath(project_path))
+            _active_api_servers.pop(project_path, None)
+
+    def get_project_api_port(project_path):
+        """
+        Check if a project has an active API server and return its port.
+
+        Args:
+            project_path: The path to the project directory
+
+        Returns:
+            int or None: The port number if API server is active, None otherwise
+        """
+        import os
+
+        # Normalize the project path for comparison
+        if project_path:
+            project_path = os.path.normpath(os.path.abspath(project_path))
+
+        # Check if we have a registered API server for this project
+        if project_path in _active_api_servers:
+            port, process_info = _active_api_servers[project_path]
+
+            # Verify the server is still running by checking the port
+            if is_port_in_use(port):
+                return port
+            else:
+                # Port is no longer in use, remove the registration
+                unregister_api_server(project_path)
+
+        return None
+
+    def get_all_active_api_servers():
+        """
+        Get all currently active API servers.
+
+        Returns:
+            dict: Dictionary mapping project paths to port numbers
+        """
+        import os
+        active_servers = {}
+
+        # Clean up any dead servers and collect active ones
+        dead_servers = []
+        for project_path, (port, process_info) in _active_api_servers.items():
+            if is_port_in_use(port):
+                active_servers[project_path] = port
+            else:
+                dead_servers.append(project_path)
+
+        # Remove dead servers
+        for project_path in dead_servers:
+            unregister_api_server(project_path)
+
+        return active_servers
+
+    def cleanup_api_servers():
+        """
+        Clean up all registered API servers that are no longer running.
+        """
+        get_all_active_api_servers()  # This will clean up dead servers as a side effect
 
     if persistent.blurb is None:
         persistent.blurb = 0
@@ -47,6 +178,13 @@ init python in project:
         persistent.collapsed_folders = { }
 
     persistent.collapsed_folders.setdefault("Tutorials", False)
+
+    # API server preferences
+    if persistent.api_server_enabled is None:
+        persistent.api_server_enabled = False
+
+    if persistent.api_server_port is None:
+        persistent.api_server_port = 8080
 
     project_filter = [ i.strip() for i in os.environ.get("RENPY_PROJECT_FILTER", "").split(":") if i.strip() ]
 
@@ -951,6 +1089,71 @@ init python in project:
 
         def __call__(self):
             self.project.launch()
+            renpy.invoke_in_new_context(self.post_launch)
+
+    class LaunchWithAPI(Action):
+        """
+        An action that launches the project with API server enabled if the
+        API checkbox is checked.
+        """
+
+        def __init__(self, p=None):
+            if p is None:
+                self.project = current
+            elif isinstance(p, str):
+                self.project = manager.get(p)
+            else:
+                self.project = p
+
+            # Store the actual port that will be used
+            self.actual_port = None
+
+        def get_sensitive(self):
+            return self.project is not None
+
+        def post_launch(self):
+            blurb = LAUNCH_BLURBS[persistent.blurb % len(LAUNCH_BLURBS)]
+            persistent.blurb += 1
+
+            if persistent.skip_splashscreen:
+                submessage = _("Splashscreen skipped in launcher preferences.")
+            else:
+                submessage = None
+
+            if persistent.api_server_enabled and self.actual_port:
+                api_msg = _("API server will start on port {}.").format(self.actual_port)
+                if submessage:
+                    submessage += "\n" + api_msg
+                else:
+                    submessage = api_msg
+
+            interface.interaction(_("Launching"), blurb, submessage=submessage, pause=2.5)
+
+        def __call__(self):
+            args = []
+
+            # Add API server arguments if enabled
+            if persistent.api_server_enabled:
+                # Always start looking from the preferred port (8080)
+                preferred_port = 8080
+                port = find_available_port(preferred_port)
+                if port is None:
+                    # Fallback to preferred port if none found (will likely fail, but let the server handle it)
+                    port = preferred_port
+
+                # Store the actual port for the launch message
+                self.actual_port = port
+
+                # Don't update persistent.api_server_port - keep it as the preferred starting point
+                # The actual port used will be tracked per-project in _active_api_servers
+
+                # Add API arguments
+                args.extend(["http_server", "--host", "localhost", "--port", str(port)])
+
+                # Register this API server for tracking
+                register_api_server(self.project.path, port)
+
+            self.project.launch(args)
             renpy.invoke_in_new_context(self.post_launch)
 
     class Rescan(Action):

@@ -736,6 +736,15 @@ class Context(renpy.object.Object):
 
         self.seen = True
 
+        # API Plugin Integration - call callback if configured
+        if renpy.config.api_seen_callback:
+            try:
+                renpy.config.api_seen_callback(self)
+            except Exception as e:
+                # Don't let API errors break the game
+                if renpy.config.developer:
+                    print(f"API seen callback error: {e}")
+
     def call(self, label, return_site=None):
         """
         Calls the named label.

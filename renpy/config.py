@@ -1585,6 +1585,47 @@ A callback that is called when an auto-voice prediction is made.
 These are called with the voice tag of the character.
 """
 
+# API Plugin Configuration
+# These callbacks and settings enable the HTTP API and route analysis system
+# for development purposes only.
+
+api_seen_callback: Callable[[Any], None] | None = None
+"""
+A callback that is called when a statement is marked as seen.
+Used by the API plugin for efficient progress tracking.
+Called with the execution context.
+"""
+
+api_label_callback: Callable[[str, bool], None] | None = None
+"""
+A callback that is called when a label is executed.
+Used by the API plugin for route analysis.
+Called with the label name and abnormal flag.
+"""
+
+api_choice_callback: Callable[[Any], None] | None = None
+"""
+A callback that is called when a choice is made.
+Used by the API plugin for choice tracking.
+Called with choice information.
+"""
+
+api_server_enabled: bool = False
+"""
+Whether the HTTP API server should be enabled.
+This should only be True during development.
+"""
+
+api_server_port: int = 8080
+"""
+The default port for the HTTP API server.
+"""
+
+api_server_host: str = "localhost"
+"""
+The default host for the HTTP API server.
+"""
+
 clear_history_on_language_change: bool = True
 """
 Should the history be cleared when the language changes?

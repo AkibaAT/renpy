@@ -147,20 +147,13 @@ class StateInspector(object):
                 'debug_info': []
             }
 
-            # Debug logging
-            print("[DEBUG] get_scene_info() called")
-
             # Get current context and scene lists
             context = renpy.game.context()
-            print(f"[DEBUG] context: {context}")
             if context and hasattr(context, 'scene_lists'):
                 scene_lists = context.scene_lists
-                print(f"[DEBUG] context.scene_lists: {scene_lists}")
 
                 # Get shown images
                 if hasattr(scene_lists, 'shown') and scene_lists.shown:
-                    print(f"[DEBUG] scene_lists.shown: {scene_lists.shown}")
-                    print(f"[DEBUG] scene_lists.shown attributes: {dir(scene_lists.shown)}")
                     # Try to access shown images properly
                     if hasattr(scene_lists.shown, 'images'):
                         for layer, images in scene_lists.shown.images.items():
@@ -171,38 +164,25 @@ class StateInspector(object):
                                     'name': image_info.get('name', ''),
                                     'zorder': image_info.get('zorder', 0)
                                 })
-                    else:
-                        print("[DEBUG] scene_lists.shown has no 'images' attribute")
 
                 # Get layer information
                 if hasattr(scene_lists, 'layers'):
-                    print(f"[DEBUG] scene_lists.layers keys: {list(scene_lists.layers.keys())}")
                     for layer_name, layer_contents in scene_lists.layers.items():
                         scene_info['scene_lists'][layer_name] = len(layer_contents)
-                        print(f"[DEBUG] layer {layer_name}: {len(layer_contents)} items")
 
             # Get active screens and images using scene_lists
             scene_lists = renpy.exports.scene_lists()
-            print(f"[DEBUG] renpy.exports.scene_lists(): {scene_lists}")
             if scene_lists and hasattr(scene_lists, 'layers'):
-                print(f"[DEBUG] scene_lists.layers: {list(scene_lists.layers.keys())}")
                 for layer_name, layer_list in scene_lists.layers.items():
-                    print(f"[DEBUG] checking layer {layer_name}: {len(layer_list)} items")
                     # Layer is a list of SLE (Scene List Entry) objects
                     for i, sle in enumerate(layer_list):
-                        print(f"[DEBUG] SLE {i}: {sle}")
-                        print(f"[DEBUG] SLE {i} type: {type(sle)}")
-
                         # Get the displayable from the SLE
                         if hasattr(sle, 'displayable'):
                             displayable = sle.displayable
-                            print(f"[DEBUG] SLE {i} displayable: {displayable}")
-                            print(f"[DEBUG] displayable type: {type(displayable)}")
 
                             # Check if this is a screen displayable
                             if hasattr(displayable, 'screen_name'):
                                 screen_name = displayable.screen_name
-                                print(f"[DEBUG] found screen: {screen_name}")
                                 if isinstance(screen_name, tuple):
                                     screen_name = screen_name[0]
                                 scene_info['active_screens'].append(screen_name)
@@ -211,7 +191,6 @@ class StateInspector(object):
                             if hasattr(sle, 'tag') and hasattr(sle, 'name'):
                                 tag = sle.tag
                                 name = sle.name
-                                print(f"[DEBUG] found image - tag: {tag}, name: {name}")
 
                                 # Get additional image info
                                 image_info = {
@@ -232,23 +211,14 @@ class StateInspector(object):
                                 self._extract_display_properties(displayable, sle, image_info)
 
                                 scene_info['shown_images'].append(image_info)
-                            else:
-                                print(f"[DEBUG] SLE {i} has no tag/name (not an image)")
-                        else:
-                            print(f"[DEBUG] SLE {i} has no displayable attribute")
-            else:
-                print("[DEBUG] No scene_lists or no layers")
 
             # Get audio information
             try:
-                print("[DEBUG] Getting audio information")
-
                 # Try different ways to access the audio system
                 audio_found = False
 
                 # Method 1: Try renpy.music directly
                 if hasattr(renpy, 'music'):
-                    print(f"[DEBUG] renpy.music available: True")
                     try:
                         music_playing = renpy.music.get_playing(channel='music')
                         if music_playing:
@@ -257,15 +227,11 @@ class StateInspector(object):
                                 'channel': 'music'
                             }
                             audio_found = True
-                            print(f"[DEBUG] music playing via renpy.music: {music_playing}")
-                    except Exception as e:
-                        print(f"[DEBUG] error with renpy.music: {e}")
-                else:
-                    print("[DEBUG] renpy.music not available")
+                    except Exception:
+                        pass
 
                 # Method 2: Try accessing through renpy.audio
                 if not audio_found and hasattr(renpy, 'audio'):
-                    print("[DEBUG] trying renpy.audio")
                     try:
                         if hasattr(renpy.audio, 'music') and hasattr(renpy.audio.music, 'get_playing'):
                             music_playing = renpy.audio.music.get_playing()
@@ -275,18 +241,12 @@ class StateInspector(object):
                                     'channel': 'music'
                                 }
                                 audio_found = True
-                                print(f"[DEBUG] music playing via renpy.audio.music: {music_playing}")
-                    except Exception as e:
-                        print(f"[DEBUG] error with renpy.audio: {e}")
+                    except Exception:
+                        pass
 
                 # Method 3: Try accessing through renpy.exports
                 if not audio_found:
-                    print("[DEBUG] trying renpy.exports for audio")
                     try:
-                        # Check if there are any audio-related exports
-                        audio_exports = [attr for attr in dir(renpy.exports) if 'music' in attr.lower() or 'audio' in attr.lower() or 'sound' in attr.lower()]
-                        print(f"[DEBUG] audio-related exports: {audio_exports}")
-
                         # Try some common audio function names
                         for func_name in ['music_get_playing', 'get_playing_music', 'audio_get_playing']:
                             if hasattr(renpy.exports, func_name):
@@ -298,16 +258,14 @@ class StateInspector(object):
                                             'channel': 'music'
                                         }
                                         audio_found = True
-                                        print(f"[DEBUG] music playing via {func_name}: {result}")
                                         break
-                                except Exception as e:
-                                    print(f"[DEBUG] error with {func_name}: {e}")
-                    except Exception as e:
-                        print(f"[DEBUG] error with renpy.exports audio: {e}")
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
 
                 # Method 4: Try accessing the audio system through the store
                 if not audio_found:
-                    print("[DEBUG] trying store access for audio")
                     try:
                         import store
                         if hasattr(store, 'renpy') and hasattr(store.renpy, 'music'):
@@ -318,32 +276,22 @@ class StateInspector(object):
                                     'channel': 'music'
                                 }
                                 audio_found = True
-                                print(f"[DEBUG] music playing via store.renpy.music: {music_playing}")
-                    except Exception as e:
-                        print(f"[DEBUG] error with store audio: {e}")
+                    except Exception:
+                        pass
 
-                if not audio_found:
-                    print("[DEBUG] no audio system found or no music playing")
-
-            except Exception as e:
-                print(f"[DEBUG] error getting audio info: {e}")
-                import traceback
-                print(f"[DEBUG] traceback: {traceback.format_exc()}")
+            except Exception:
+                pass
 
             # Add detailed screen content analysis
             try:
                 detailed_screens = self._get_detailed_screen_info()
                 if detailed_screens:
                     scene_info['detailed_screens'] = detailed_screens
-            except Exception as e:
-                print(f"[DEBUG] Error getting detailed screen info: {e}")
+            except Exception:
+                pass
 
-            print(f"[DEBUG] final scene_info: {scene_info}")
             return scene_info
         except Exception as e:
-            print(f"[DEBUG] Exception in get_scene_info: {e}")
-            import traceback
-            traceback.print_exc()
             return {'shown_images': [], 'active_screens': [], 'scene_lists': {}}
     
     def get_dialogue_info(self):
@@ -483,10 +431,7 @@ class StateInspector(object):
 
             # print(f"[DEBUG] final choices: {choices}")  # Reduce debug output
             return choices
-        except Exception as e:
-            print(f"[DEBUG] Exception in get_choices: {e}")
-            import traceback
-            traceback.print_exc()
+        except Exception:
             return []
 
     def _extract_screen_choices(self, screen_displayable, screen_name):
@@ -747,9 +692,9 @@ class StateInspector(object):
             if transform_info:
                 image_info['transform'] = transform_info
                 
-        except Exception as e:
-            print(f"[DEBUG] Error extracting display properties: {e}")
+        except Exception:
             # Don't fail the entire operation if we can't get transform info
+            pass
             pass
 
     def _extract_screen_background(self, screen_displayable, screen_info):
@@ -786,8 +731,7 @@ class StateInspector(object):
             if background_info:
                 screen_info['background_info'] = background_info
                 
-        except Exception as e:
-            print(f"[DEBUG] Error extracting screen background: {e}")
+        except Exception:
             pass
 
     def _search_displayable_tree_for_images(self, displayable, info_dict, prefix=''):
@@ -825,8 +769,7 @@ class StateInspector(object):
             elif hasattr(displayable, 'child') and displayable.child:
                 self._search_displayable_tree_for_images(displayable.child, info_dict, f'{prefix}_child')
                 
-        except Exception as e:
-            print(f"[DEBUG] Error searching displayable tree: {e}")
+        except Exception:
             pass
 
     def _extract_screen_content(self, screen_displayable, content_list, depth=0, max_depth=10):
@@ -850,8 +793,7 @@ class StateInspector(object):
             if hasattr(screen_displayable, 'child') and screen_displayable.child:
                 self._traverse_displayable_hierarchy(screen_displayable.child, content_list, depth + 1, max_depth)
                 
-        except Exception as e:
-            print(f"[DEBUG] Error extracting screen content: {e}")
+        except Exception:
             pass
 
     def _traverse_displayable_hierarchy(self, displayable, content_list, depth=0, max_depth=10):
@@ -921,8 +863,7 @@ class StateInspector(object):
             elif hasattr(displayable, 'child') and displayable.child:
                 self._traverse_displayable_hierarchy(displayable.child, content_list, depth + 1, max_depth)
                 
-        except Exception as e:
-            print(f"[DEBUG] Error traversing displayable hierarchy: {e}")
+        except Exception:
             pass
 
     def _get_detailed_screen_info(self):
@@ -934,17 +875,15 @@ class StateInspector(object):
         """
         try:
             detailed_screens = []
-            print("[DEBUG] Getting detailed screen info...")
-            
+
             # Get scene lists
             scene_lists = renpy.exports.scene_lists()
             if not scene_lists or not hasattr(scene_lists, 'layers'):
                 return detailed_screens
-                
+
             # Process screens layer
             if 'screens' in scene_lists.layers:
                 screens_layer = scene_lists.layers['screens']
-                print(f"[DEBUG] Found {len(screens_layer)} items in screens layer")
                 
                 for i, sle in enumerate(screens_layer):
                     screen_detail = self._analyze_screen_sle(sle, i)
@@ -953,8 +892,7 @@ class StateInspector(object):
             
             return detailed_screens
             
-        except Exception as e:
-            print(f"[DEBUG] Error in _get_detailed_screen_info: {e}")
+        except Exception:
             return []
 
     def _analyze_screen_sle(self, sle, index):
@@ -980,31 +918,27 @@ class StateInspector(object):
             if isinstance(screen_name, tuple):
                 screen_name = screen_name[0]
                 
-            print(f"[DEBUG] Analyzing screen: {screen_name}")
-            
             screen_info = {
                 'screen_name': screen_name,
                 'index': index,
                 'type': type(displayable).__name__,
                 'visual_elements': []
             }
-            
+
             # Extract transform properties of the screen itself
             screen_info['transform'] = self._get_transform_properties(displayable, sle)
-            
+
             # Analyze screen content
             if hasattr(displayable, 'child') and displayable.child:
-                print(f"[DEBUG] Screen {screen_name} has child: {type(displayable.child).__name__}")
                 screen_info['content_type'] = type(displayable.child).__name__
-                
+
                 # Extract visual elements from the screen's content
                 visual_elements = self._extract_visual_elements(displayable.child)
                 screen_info['visual_elements'] = visual_elements
-                
+
             return screen_info
-            
-        except Exception as e:
-            print(f"[DEBUG] Error analyzing screen SLE: {e}")
+
+        except Exception:
             return None
 
     def _extract_visual_elements(self, container):
@@ -1020,7 +954,6 @@ class StateInspector(object):
         elements = []
         try:
             if hasattr(container, 'children') and container.children:
-                print(f"[DEBUG] Container has {len(container.children)} children")
                 for i, child in enumerate(container.children):
                     element = self._analyze_visual_element(child, i)
                     if element:
@@ -1029,10 +962,10 @@ class StateInspector(object):
                 element = self._analyze_visual_element(container.child, 0)
                 if element:
                     elements.append(element)
-                    
-        except Exception as e:
-            print(f"[DEBUG] Error extracting visual elements: {e}")
-            
+
+        except Exception:
+            pass
+
         return elements
 
     def _analyze_visual_element(self, element, index):
@@ -1057,7 +990,6 @@ class StateInspector(object):
             if 'Image' in element_type:
                 if hasattr(element, 'filename'):
                     info['filename'] = element.filename
-                    print(f"[DEBUG] Found image: {element.filename}")
                 if hasattr(element, 'name'):
                     info['name'] = str(element.name)
                 if hasattr(element, 'image'):
@@ -1085,8 +1017,7 @@ class StateInspector(object):
                 
             return None
             
-        except Exception as e:
-            print(f"[DEBUG] Error analyzing visual element: {e}")
+        except Exception:
             return None
 
     def _get_transform_properties(self, displayable, sle=None):
@@ -1139,9 +1070,9 @@ class StateInspector(object):
                         if value is not None:
                             transform[prop] = value
                             
-        except Exception as e:
-            print(f"[DEBUG] Error getting transform properties: {e}")
-            
+        except Exception:
+            pass
+
         return transform
 
     def _check_widget_enabled(self, widget, action_value):
@@ -1167,7 +1098,6 @@ class StateInspector(object):
             # Check if widget is focusable/enabled (only if explicitly set to False)
             if hasattr(widget, 'focusable') and widget.focusable is not None:
                 if widget.focusable is False:
-                    print(f"[DEBUG] widget not focusable: {widget.focusable}")
                     return False
             
             # Check for disabled/enabled attributes
@@ -1175,10 +1105,8 @@ class StateInspector(object):
                 if hasattr(widget, attr):
                     value = getattr(widget, attr)
                     if attr == 'enabled' and not value:
-                        print(f"[DEBUG] widget explicitly disabled: enabled={value}")
                         return False
                     elif attr == 'disabled' and value:
-                        print(f"[DEBUG] widget explicitly disabled: disabled={value}")
                         return False
             
             # Check if action is actually callable/valid
@@ -1197,17 +1125,17 @@ class StateInspector(object):
                             # If get_sensitive() fails, assume enabled
                             pass
                             
-                except Exception as e:
-                    print(f"[DEBUG] error checking action validity: {e}")
+                except Exception:
                     # If we can't determine, assume it's enabled
+                    pass
                     pass
             
             # If we get here and haven't found any reason it's disabled, assume enabled
             return True
             
-        except Exception as e:
-            print(f"[DEBUG] error in _check_widget_enabled: {e}")
+        except Exception:
             # Default to enabled if we can't determine
+            pass
             return True
     
     def get_context_info(self):
@@ -1285,7 +1213,6 @@ class StateInspector(object):
         """
         try:
             interactables = []
-            print("[DEBUG] Getting UI interactables using focus system")
             
             # Method 1: Use focus system to get all focusable elements
             try:
@@ -1293,7 +1220,6 @@ class StateInspector(object):
                 
                 # Get current focus list
                 if hasattr(focus, 'focus_list') and focus.focus_list:
-                    print(f"[DEBUG] Found {len(focus.focus_list)} items in focus_list")
                     for i, focus_item in enumerate(focus.focus_list):
                         if hasattr(focus_item, 'widget') and focus_item.widget:
                             widget = focus_item.widget
@@ -1336,19 +1262,16 @@ class StateInspector(object):
                     screen_module = renpy.display.screen
                     if hasattr(screen_module, 'screens'):
                         active_screens = screen_module.screens
-                        print(f"[DEBUG] Found {len(active_screens)} active screens")
                         for screen_name, screen_obj in active_screens.items():
-                            print(f"[DEBUG] Processing screen: {screen_name}")
                             # Try to extract widgets from screen
                             screen_widgets = self._extract_screen_widgets(screen_obj, screen_name)
                             interactables.extend(screen_widgets)
                             
-            except Exception as e:
-                print(f"[DEBUG] Error in focus system method: {e}")
-            
+            except Exception:
+                pass
+
             # Method 3: Fall back to scene_lists method if focus system didn't work
             if not interactables:
-                print("[DEBUG] No interactables found via focus system, trying scene_lists method")
                 scene_lists = renpy.exports.scene_lists()
                 if scene_lists and hasattr(scene_lists, 'layers'):
                     for layer_name, layer_list in scene_lists.layers.items():
@@ -1360,17 +1283,12 @@ class StateInspector(object):
                                         screen_name = displayable.screen_name
                                         if isinstance(screen_name, tuple):
                                             screen_name = screen_name[0]
-                                        print(f"[DEBUG] Processing screen: {screen_name}")
                                         screen_widgets = self._extract_screen_widgets_from_displayable(displayable, screen_name)
                                         interactables.extend(screen_widgets)
-            
-            print(f"[DEBUG] Total interactables found: {len(interactables)}")
+
             return interactables
-            
-        except Exception as e:
-            print(f"[DEBUG] Exception in get_ui_interactables: {e}")
-            import traceback
-            traceback.print_exc()
+
+        except Exception:
             return []
     
     def _extract_screen_widgets(self, screen_obj, screen_name):
@@ -1379,33 +1297,28 @@ class StateInspector(object):
         try:
             # This would need to be implemented based on the actual screen object structure
             # For now, return empty list as we'll use the displayable method
-            print(f"[DEBUG] _extract_screen_widgets for {screen_name} - not implemented")
-        except Exception as e:
-            print(f"[DEBUG] Error extracting widgets from screen {screen_name}: {e}")
+            pass
+        except Exception:
+            pass
         return widgets
     
     def _extract_screen_widgets_from_displayable(self, screen_displayable, screen_name):
         """Extract interactive widgets from a screen displayable."""
         widgets = []
         try:
-            print(f"[DEBUG] Extracting widgets from screen displayable: {screen_name}")
-            
             def traverse_widgets(widget, depth=0):
-                indent = "  " * depth
                 widget_type = type(widget).__name__
-                print(f"[DEBUG] {indent}Widget: {widget_type}")
-                
+
                 # Check if this widget is interactive
                 is_interactive = False
                 action_info = {}
-                
+
                 for attr in ['clicked', 'action', 'activate', 'hovered']:
                     if hasattr(widget, attr):
                         action_value = getattr(widget, attr)
                         if action_value:
                             is_interactive = True
                             action_info[attr] = str(action_value)
-                            print(f"[DEBUG] {indent}  Found action {attr}: {action_value}")
                 
                 if is_interactive:
                     widget_info = {
@@ -1418,7 +1331,6 @@ class StateInspector(object):
                     text = self._extract_widget_text(widget)
                     if text:
                         widget_info['text'] = text
-                        print(f"[DEBUG] {indent}  Text: {text}")
                     
                     # Get enabled/sensitive state
                     if hasattr(widget, 'sensitive'):
@@ -1444,9 +1356,7 @@ class StateInspector(object):
             else:
                 traverse_widgets(screen_displayable)
                 
-        except Exception as e:
-            print(f"[DEBUG] Error in _extract_screen_widgets_from_displayable: {e}")
-            import traceback
-            traceback.print_exc()
-        
+        except Exception:
+            pass
+
         return widgets
