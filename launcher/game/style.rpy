@@ -309,6 +309,13 @@ style l_left_button is l_right_button:
 
 style l_left_button_text is l_right_button_text
 
+# API server checkbox positioned below the right button
+style l_right_checkbox is l_checkbox:
+    xalign 1.0
+    ypos 600 - 128 + 12 + 32
+    right_margin 10 + INDENT
+
+style l_right_checkbox_text is l_checkbox_text
 
 # The root frame. This contains everything but the bottom navigation,
 # and buttons.
