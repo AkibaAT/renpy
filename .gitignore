@@ -32,6 +32,7 @@ traceback.txt
 lint.txt
 
 # Created directories.
+.route_cache/
 saves/
 tmp/
 cache/
