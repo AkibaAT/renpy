@@ -99,79 +99,365 @@ class GameController(object):
         Returns:
             bool: True if selection was successful
         """
-        try:
-            # Get current choices from the testing interface
-            if self.testing_interface:
-                choices = self.testing_interface.get_choices()
+        # Get current choices from the testing interface
+        if self.testing_interface:
+            choices = self.testing_interface.get_choices()
+        else:
+            # Fallback if no testing interface available
+            from . import state_inspector
+            inspector = state_inspector.StateInspector()
+            choices = inspector.get_choices()
+        print(f"[DEBUG] Found {len(choices)} choices available")
+
+        if isinstance(choice, int):
+            # Select by index
+            if 0 <= choice < len(choices):
+                choice_data = choices[choice]
+                print(f"[DEBUG] Selected choice {choice}: {choice_data.get('label', 'unknown')}")
+                return self._invoke_choice_action(choice_data)
             else:
-                # Fallback if no testing interface available
-                from . import state_inspector
-                inspector = state_inspector.StateInspector()
-                choices = inspector.get_choices()
-            print(f"[DEBUG] Found {len(choices)} choices available")
-            
-            if isinstance(choice, int):
-                # Select by index
-                if 0 <= choice < len(choices):
-                    choice_data = choices[choice]
-                    print(f"[DEBUG] Selected choice {choice}: {choice_data.get('label', 'unknown')}")
-                    return self._invoke_choice_action(choice_data)
-                else:
-                    print(f"[DEBUG] Choice index {choice} out of range (0-{len(choices)-1})")
-                    return False
-                    
-            elif isinstance(choice, str):
-                # Select by text - find matching choice
-                for choice_data in choices:
-                    if choice_data.get('label') == choice:
-                        return self._invoke_choice_action(choice_data)
-                print(f"[DEBUG] Choice with label '{choice}' not found")
+                print(f"[DEBUG] Choice index {choice} out of range (0-{len(choices)-1})")
                 return False
-            
+
+        elif isinstance(choice, str):
+            # Select by text - find matching choice
+            for choice_data in choices:
+                if choice_data.get('label') == choice:
+                    return self._invoke_choice_action(choice_data)
+            print(f"[DEBUG] Choice with label '{choice}' not found")
             return False
-            
-        except Exception as e:
-            print(f"[DEBUG] Error in select_choice: {e}")
-            return False
+
+        return False
     
     def _invoke_choice_action(self, choice_data):
         """
         Invoke the action for a specific choice.
-        
+
         Args:
             choice_data (dict): Choice information including action
-            
+
         Returns:
             bool: True if action was successfully invoked
         """
-        try:
-            # Check if choice is enabled
-            if not choice_data.get('enabled', True):
-                print(f"[DEBUG] Choice '{choice_data.get('label')}' is disabled")
-                return False
-            
-            action_str = choice_data.get('action', '')
-            label = choice_data.get('label', 'unknown')
-            
-            print(f"[DEBUG] Attempting to invoke action for '{label}': {action_str}")
-            
-            # Method 1: Try to invoke the action directly if we can parse it
-            if 'store.' in action_str:
-                try:
-                    # Extract the action object reference and try to access it
-                    # This is a complex approach - let's try a simpler method first
-                    pass
-                except Exception as e:
-                    print(f"[DEBUG] Could not directly invoke action: {e}")
-            
-            # Method 2: Try using mouse click on the button location
-            # This is more reliable for UI buttons
-            return self._click_choice_button(choice_data)
-            
-        except Exception as e:
-            print(f"[DEBUG] Error invoking choice action: {e}")
+        # Check if choice is enabled
+        if not choice_data.get('enabled', True):
+            print(f"[DEBUG] Choice '{choice_data.get('label')}' is disabled")
             return False
-    
+
+        action_str = choice_data.get('action', '')
+        label = choice_data.get('label', 'unknown')
+
+        print(f"[DEBUG] Attempting to invoke action for '{label}': {action_str}")
+
+        # Method 1: Try to invoke the action directly by finding the actual action object
+        if self._invoke_action_object(choice_data):
+            print(f"[DEBUG] Successfully invoked action object for '{label}'")
+            return True
+
+        # Method 2: Try using mouse click on the button location as fallback
+        print(f"[DEBUG] Falling back to mouse click for '{label}'")
+        return self._click_choice_button(choice_data)
+
+    def _invoke_action_object(self, choice_data):
+        """
+        Try to invoke the action object directly by finding it in the UI system.
+
+        Args:
+            choice_data (dict): Choice information including action
+
+        Returns:
+            bool: True if action was successfully invoked
+        """
+        action_str = choice_data.get('action', '')
+        label = choice_data.get('label', 'unknown')
+        screen_name = choice_data.get('screen', '')
+
+        print(f"[DEBUG] Looking for action object for '{label}' in screen '{screen_name}'")
+
+        # Method 1: Try to find the action object in the current screen's displayables
+        action_obj = self._find_action_in_screen(screen_name, label)
+
+        if action_obj:
+            print(f"[DEBUG] Found action object in screen: {action_obj}")
+
+            # Check if the action is sensitive (enabled)
+            if hasattr(action_obj, 'get_sensitive'):
+                if not action_obj.get_sensitive():
+                    print(f"[DEBUG] Action is not sensitive (disabled)")
+                    return False
+
+            # Invoke the action using renpy.display.behavior.run
+            import renpy.display.behavior
+            print(f"[DEBUG] Invoking action using renpy.display.behavior.run")
+            result = renpy.display.behavior.run(action_obj)
+            print(f"[DEBUG] Action result: {result}")
+            return True
+
+        # Method 2: Try to create the action object based on the class name
+        return self._create_and_invoke_action(action_str, label)
+
+    def _find_action_in_screen(self, screen_name, button_label):
+        """
+        Find the action object for a button in the specified screen.
+
+        Args:
+            screen_name (str): Name of the screen to search
+            button_label (str): Label of the button to find
+
+        Returns:
+            Action object or None if not found
+        """
+        try:
+            import renpy
+
+            # Get the current scene lists
+            scene_lists = renpy.exports.scene_lists()
+            if not scene_lists or not hasattr(scene_lists, 'layers'):
+                return None
+
+            # Search through all layers for the screen
+            for layer_name, layer_list in scene_lists.layers.items():
+                for sle in layer_list:
+                    if hasattr(sle, 'displayable'):
+                        displayable = sle.displayable
+
+                        # Check if this is the screen we're looking for
+                        if hasattr(displayable, 'screen_name'):
+                            current_screen_name = displayable.screen_name
+                            if isinstance(current_screen_name, tuple):
+                                current_screen_name = current_screen_name[0]
+
+                            if current_screen_name == screen_name:
+                                # Search for the button with matching label
+                                action = self._find_button_action_recursive(displayable, button_label)
+                                if action:
+                                    return action
+
+            return None
+
+        except Exception as e:
+            print(f"[DEBUG] Error finding action in screen: {e}")
+            return None
+
+    def _find_button_action_recursive(self, widget, target_label):
+        """
+        Recursively search for a button with the target label and return its action.
+
+        Args:
+            widget: The widget to search
+            target_label (str): The label to match
+
+        Returns:
+            Action object or None if not found
+        """
+        try:
+            # Check if this widget has text that matches our target
+            text = self._extract_widget_text(widget)
+            if text and text.strip() == target_label.strip():
+                # Check for action attributes
+                for attr in ['clicked', 'action', 'activate']:
+                    if hasattr(widget, attr):
+                        action = getattr(widget, attr)
+                        if action:
+                            return action
+
+            # Recursively search child widgets
+            if hasattr(widget, 'child') and widget.child:
+                result = self._find_button_action_recursive(widget.child, target_label)
+                if result:
+                    return result
+
+            if hasattr(widget, 'children'):
+                for child in widget.children:
+                    result = self._find_button_action_recursive(child, target_label)
+                    if result:
+                        return result
+
+            return None
+
+        except Exception:
+            return None
+
+    def _extract_widget_text(self, widget):
+        """
+        Extract text from a widget using various methods.
+
+        Args:
+            widget: The widget to extract text from
+
+        Returns:
+            str or None: The extracted text
+        """
+        try:
+            # Method 1: Direct text attribute
+            if hasattr(widget, 'text'):
+                text = widget.text
+                if isinstance(text, str):
+                    return text
+                elif hasattr(text, 'text'):
+                    return str(text.text)
+                else:
+                    return str(text)
+
+            # Method 2: Child text widget
+            if hasattr(widget, 'child') and widget.child:
+                child_text = self._extract_widget_text(widget.child)
+                if child_text:
+                    return child_text
+
+            # Method 3: Children text widgets
+            if hasattr(widget, 'children'):
+                for child in widget.children:
+                    child_text = self._extract_widget_text(child)
+                    if child_text:
+                        return child_text
+
+            return None
+
+        except Exception:
+            return None
+
+    def _create_and_invoke_action(self, action_str, label):
+        """
+        Try to create and invoke an action based on the action string.
+
+        Args:
+            action_str (str): String representation of the action
+            label (str): Button label for context
+
+        Returns:
+            bool: True if action was successfully invoked
+        """
+        import re
+        import renpy
+        import threading
+
+        # Parse the action string to extract class name
+        match = re.match(r'<store\.(\w+) object at', action_str)
+        if not match:
+            print(f"[DEBUG] Could not parse action class from: {action_str}")
+            return False
+
+        class_name = match.group(1)
+        print(f"[DEBUG] Attempting to create {class_name} action for '{label}'")
+
+        # Create appropriate action based on class name
+        if class_name == 'Start':
+            action = renpy.store.Start()
+        elif class_name == 'Quit':
+            action = renpy.store.Quit(confirm=False)  # Skip confirmation for testing
+        elif class_name == 'ShowMenu':
+            # Try to determine which menu based on the label
+            if label.lower() in ['load', 'continue']:
+                action = renpy.store.ShowMenu('load')
+            elif label.lower() in ['save']:
+                action = renpy.store.ShowMenu('save')
+            elif label.lower() in ['preferences', 'prefs', 'options']:
+                action = renpy.store.ShowMenu('preferences')
+            elif label.lower() in ['about']:
+                action = renpy.store.ShowMenu('about')
+            elif label.lower() in ['help']:
+                action = renpy.store.ShowMenu('help')
+            else:
+                print(f"[DEBUG] Unknown ShowMenu target for label '{label}'")
+                return False
+        else:
+            print(f"[DEBUG] Unknown action class: {class_name}")
+            return False
+
+        print(f"[DEBUG] Created action: {action}")
+
+        # Instead of executing the action directly, try to simulate a button click
+        # This should work better because button clicks are processed by the main execution loop
+        print(f"[DEBUG] Attempting to simulate button click for {class_name} action")
+
+        # Try to find the button in the UI and simulate a click
+        if self._simulate_button_click(action, label):
+            print(f"[DEBUG] Successfully simulated button click for '{label}'")
+            return True
+
+        # Fallback: try direct action execution
+        print(f"[DEBUG] Button click simulation failed, trying direct action execution")
+
+        # Check if we're in the main thread
+        if threading.current_thread().name == "MainThread":
+            # We're in the main thread, execute directly
+            print(f"[DEBUG] Executing action in main thread")
+            result = renpy.display.behavior.run(action)
+            print(f"[DEBUG] Action result: {result}")
+            return True
+        else:
+            # We're in a different thread (likely HTTP server thread)
+            # Use invoke_in_main_thread to execute in the main thread
+            print(f"[DEBUG] Not in main thread, invoking action in main thread...")
+
+            result_container = {'result': None, 'exception': None, 'completed': False}
+
+            def action_wrapper():
+                try:
+                    result_container['result'] = renpy.display.behavior.run(action)
+                    print(f"[DEBUG] Action executed in main thread, result: {result_container['result']}")
+                except Exception as e:
+                    result_container['exception'] = e
+                    print(f"[DEBUG] Action exception in main thread: {e}")
+                finally:
+                    result_container['completed'] = True
+
+            # Invoke in main thread
+            from renpy.exports.platformexports import invoke_in_main_thread
+            invoke_in_main_thread(action_wrapper)
+
+            # Wait for completion (with timeout)
+            import time
+            timeout = 5.0  # 5 second timeout
+            start_time = time.time()
+
+            while not result_container['completed']:
+                if time.time() - start_time > timeout:
+                    print(f"[DEBUG] Action timeout waiting for main thread")
+                    return False
+                time.sleep(0.01)  # Small sleep to avoid busy waiting
+
+            if result_container['exception']:
+                # Re-raise any exception from the main thread
+                print(f"[DEBUG] Exception from main thread - re-raising: {result_container['exception']}")
+                raise result_container['exception']
+
+            print(f"[DEBUG] Action completed successfully in main thread")
+            return True
+
+    def _simulate_button_click(self, action, label):
+        """
+        Try to simulate a button click by finding the button in the UI and triggering it.
+
+        Args:
+            action: The action object to execute
+            label (str): The button label
+
+        Returns:
+            bool: True if button click was simulated successfully
+        """
+        try:
+            import renpy
+
+            # For Start action, try to queue a "button_select" event to simulate clicking the Start button
+            if hasattr(action, '__class__') and action.__class__.__name__ == 'Start':
+                print(f"[DEBUG] Simulating Start action by queueing button_select event")
+
+                # Try different approaches to start the game
+
+                # Method 1: Queue a button_select event to simulate clicking the focused button
+                renpy.exports.queue_event("button_select")
+                print(f"[DEBUG] Queued button_select event")
+                return True
+
+            # For other actions, we can't easily simulate them
+            return False
+
+        except Exception as e:
+            print(f"[DEBUG] Error simulating button click: {e}")
+            return False
+
     def _click_choice_button(self, choice_data):
         """
         Try to click on the button using mouse simulation.

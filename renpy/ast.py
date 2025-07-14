@@ -1145,6 +1145,15 @@ class Label(Node):
         renpy.easy.run_callbacks(renpy.config.label_callback, self.name, renpy.game.context().last_abnormal)
         renpy.easy.run_callbacks(renpy.config.label_callbacks, self.name, renpy.game.context().last_abnormal)
 
+        # API Plugin Integration - call label callback if configured
+        if renpy.config.api_label_callback:
+            try:
+                renpy.config.api_label_callback(self.name, renpy.game.context().last_abnormal)
+            except Exception as e:
+                # Don't let API errors break the game
+                if renpy.config.developer:
+                    print(f"API label callback error: {e}")
+
     def restructure(self, callback):
         callback(self.block)
 

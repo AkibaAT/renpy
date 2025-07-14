@@ -39,6 +39,8 @@ import struct
 import uuid
 import webbrowser
 import os
+import atexit
+import signal
 try:
     from http.server import HTTPServer, BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import urlparse, parse_qs
@@ -52,6 +54,977 @@ except ImportError:
         pass
 
 import renpy
+
+# Global variable to track the HTTP server for cleanup
+_global_http_server = None
+_cleanup_in_progress = False
+
+def _cleanup_http_server():
+    """Cleanup function to stop HTTP server on exit."""
+    global _global_http_server, _cleanup_in_progress
+
+    # Prevent multiple cleanup attempts
+    if _cleanup_in_progress:
+        return
+
+    if _global_http_server and _global_http_server.is_running():
+        _cleanup_in_progress = True
+        print("Shutting down HTTP server...")
+        # Use force_stop for immediate brutal shutdown when main thread exits
+        _global_http_server.force_stop()
+        _cleanup_in_progress = False
+    # Don't print "already stopped" message to reduce noise
+
+def _signal_handler(signum, frame):
+    """Handle interrupt signals for clean shutdown."""
+    print("\nReceived interrupt signal, shutting down...")
+    _cleanup_http_server()
+
+def _register_shutdown_hooks():
+    """Register shutdown hooks with Ren'Py's callback systems."""
+    print("Registering HTTP server shutdown hooks...")
+
+    # Register with Ren'Py's shutdown callbacks
+    if hasattr(renpy, 'config'):
+        # Only use quit_callbacks - this is the most reliable for actual quit
+        if hasattr(renpy.config, 'quit_callbacks'):
+            if _cleanup_http_server not in renpy.config.quit_callbacks:
+                renpy.config.quit_callbacks.append(_cleanup_http_server)
+                print("Registered quit_callback")
+
+    # Don't use multiple hooks to avoid redundant cleanup calls
+
+# Only register signal handlers for emergency cleanup
+try:
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+except (AttributeError, ValueError):
+    # Some signals might not be available on all platforms
+    pass
+
+
+def get_openapi_spec():
+    """Generate OpenAPI 3.0 specification for the Ren'Py debugging API."""
+    return {
+        "openapi": "3.0.3",
+        "info": {
+            "title": "Ren'Py Debugging API",
+            "description": "HTTP API for debugging and testing Ren'Py visual novels during development. Provides endpoints for game state inspection, control, debugging, and route analysis.",
+            "version": "1.0.0",
+            "contact": {
+                "name": "Ren'Py Development",
+                "url": "https://www.renpy.org"
+            }
+        },
+        "servers": [
+            {
+                "url": "http://localhost:8080",
+                "description": "Local development server"
+            }
+        ],
+        "tags": [
+            {
+                "name": "status",
+                "description": "Server and game status information"
+            },
+            {
+                "name": "state",
+                "description": "Game state inspection and variables"
+            },
+            {
+                "name": "control",
+                "description": "Game control and navigation"
+            },
+            {
+                "name": "debugging",
+                "description": "Debugging features and breakpoints"
+            },
+            {
+                "name": "route-analysis",
+                "description": "Route analysis and visualization"
+            },
+            {
+                "name": "utilities",
+                "description": "Utility functions like screenshots and code execution"
+            }
+        ],
+        "paths": {
+            "/api/status": {
+                "get": {
+                    "tags": ["status"],
+                    "summary": "Get server status",
+                    "description": "Returns basic server status and project information",
+                    "responses": {
+                        "200": {
+                            "description": "Server status information",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "status": {"type": "string", "example": "running"},
+                                            "version": {"type": "string", "example": "1.0.0"},
+                                            "project_path": {"type": "string", "nullable": True},
+                                            "project_name": {"type": "string", "nullable": True}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/state": {
+                "get": {
+                    "tags": ["state"],
+                    "summary": "Get full game state",
+                    "description": "Returns comprehensive game state information including current context, variables, and scene data",
+                    "responses": {
+                        "200": {
+                            "description": "Complete game state",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "context": {"type": "object"},
+                                            "variables": {"type": "object"},
+                                            "scene_info": {"type": "object"},
+                                            "dialogue_info": {"type": "object"}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/variables": {
+                "get": {
+                    "tags": ["state"],
+                    "summary": "Get game variables",
+                    "description": "Returns current game variables including store variables and preferences",
+                    "responses": {
+                        "200": {
+                            "description": "Game variables",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "variables": {
+                                                "type": "object",
+                                                "additionalProperties": True
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/scene": {
+                "get": {
+                    "tags": ["state"],
+                    "summary": "Get scene information",
+                    "description": "Returns current scene and screen information",
+                    "responses": {
+                        "200": {
+                            "description": "Scene information",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "scene_info": {"type": "object"}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/dialogue": {
+                "get": {
+                    "tags": ["state"],
+                    "summary": "Get dialogue information",
+                    "description": "Returns current dialogue state and text",
+                    "responses": {
+                        "200": {
+                            "description": "Dialogue information",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "dialogue_info": {"type": "object"}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/choices": {
+                "get": {
+                    "tags": ["state"],
+                    "summary": "Get available choices",
+                    "description": "Returns currently available menu choices",
+                    "responses": {
+                        "200": {
+                            "description": "Available choices",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "choices": {
+                                                "type": "array",
+                                                "items": {"type": "object"}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/saves": {
+                "get": {
+                    "tags": ["state"],
+                    "summary": "List save slots",
+                    "description": "Returns available save slots",
+                    "responses": {
+                        "200": {
+                            "description": "Save slots",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "saves": {
+                                                "type": "array",
+                                                "items": {"type": "object"}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/interactables": {
+                "get": {
+                    "tags": ["state"],
+                    "summary": "Get UI interactables",
+                    "description": "Returns currently interactable UI elements",
+                    "responses": {
+                        "200": {
+                            "description": "UI interactables",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "interactables": {
+                                                "type": "array",
+                                                "items": {"type": "object"}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/advance": {
+                "post": {
+                    "tags": ["control"],
+                    "summary": "Advance dialogue",
+                    "description": "Advances the dialogue to the next statement",
+                    "responses": {
+                        "200": {
+                            "description": "Advance result",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/Success"}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/rollback": {
+                "post": {
+                    "tags": ["control"],
+                    "summary": "Roll back dialogue",
+                    "description": "Rolls back the dialogue by specified number of steps",
+                    "requestBody": {
+                        "required": False,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "steps": {
+                                            "type": "integer",
+                                            "default": 1,
+                                            "description": "Number of steps to roll back"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Rollback result",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/Success"}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/choice": {
+                "post": {
+                    "tags": ["control"],
+                    "summary": "Select a choice",
+                    "description": "Selects a choice from the current menu",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "choice": {
+                                            "type": "integer",
+                                            "description": "Index of the choice to select"
+                                        }
+                                    },
+                                    "required": ["choice"]
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Choice selection result",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/Success"}
+                                }
+                            }
+                        },
+                        "400": {"$ref": "#/components/responses/BadRequest"}
+                    }
+                }
+            },
+            "/api/jump": {
+                "post": {
+                    "tags": ["control"],
+                    "summary": "Jump to label",
+                    "description": "Jumps to a specific label in the script",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "label": {
+                                            "type": "string",
+                                            "description": "Name of the label to jump to"
+                                        }
+                                    },
+                                    "required": ["label"]
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Jump result",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/Success"}
+                                }
+                            }
+                        },
+                        "400": {"$ref": "#/components/responses/BadRequest"}
+                    }
+                }
+            },
+            "/api/variable": {
+                "post": {
+                    "tags": ["control"],
+                    "summary": "Set variable",
+                    "description": "Sets a game variable to a specific value",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {
+                                            "type": "string",
+                                            "description": "Name of the variable to set"
+                                        },
+                                        "value": {
+                                            "description": "Value to set (any JSON type)"
+                                        }
+                                    },
+                                    "required": ["name"]
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Variable set result",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/Success"}
+                                }
+                            }
+                        },
+                        "400": {"$ref": "#/components/responses/BadRequest"}
+                    }
+                }
+            },
+            "/api/breakpoints": {
+                "get": {
+                    "tags": ["debugging"],
+                    "summary": "List breakpoints",
+                    "description": "Returns all currently set breakpoints",
+                    "responses": {
+                        "200": {
+                            "description": "List of breakpoints",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "breakpoints": {
+                                                "type": "array",
+                                                "items": {"type": "object"}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/breakpoint/set": {
+                "post": {
+                    "tags": ["debugging"],
+                    "summary": "Set breakpoint",
+                    "description": "Sets a breakpoint at specified file and line",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "filename": {"type": "string", "description": "File to set breakpoint in"},
+                                        "line": {"type": "integer", "description": "Line number for breakpoint"},
+                                        "condition": {"type": "string", "description": "Optional condition for breakpoint"}
+                                    },
+                                    "required": ["filename", "line"]
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Breakpoint set result",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "success": {"type": "boolean"},
+                                            "filename": {"type": "string"},
+                                            "line": {"type": "integer"},
+                                            "condition": {"type": "string", "nullable": True}
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "400": {"$ref": "#/components/responses/BadRequest"},
+                        "500": {"$ref": "#/components/responses/InternalServerError"}
+                    }
+                }
+            },
+            "/api/debug/status": {
+                "get": {
+                    "tags": ["debugging"],
+                    "summary": "Get debug status",
+                    "description": "Returns current debugging mode status",
+                    "responses": {
+                        "200": {
+                            "description": "Debug status",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "debug_mode": {"type": "boolean"},
+                                            "paused": {"type": "boolean"},
+                                            "current_location": {"type": "object", "nullable": True}
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "500": {"$ref": "#/components/responses/InternalServerError"}
+                    }
+                }
+            },
+            "/api/route/analyze": {
+                "get": {
+                    "tags": ["route-analysis"],
+                    "summary": "Complete route analysis",
+                    "description": "Returns comprehensive route analysis including nodes, edges, and metadata",
+                    "parameters": [
+                        {
+                            "name": "force_refresh",
+                            "in": "query",
+                            "description": "Force refresh of analysis cache",
+                            "required": False,
+                            "schema": {
+                                "type": "boolean",
+                                "default": False
+                            }
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Complete route analysis data",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "nodes": {"type": "array", "items": {"type": "object"}},
+                                            "edges": {"type": "array", "items": {"type": "object"}},
+                                            "metadata": {"type": "object"},
+                                            "choice_requirements": {"type": "object"}
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "500": {"$ref": "#/components/responses/InternalServerError"}
+                    }
+                }
+            },
+            "/api/route/graph": {
+                "get": {
+                    "tags": ["route-analysis"],
+                    "summary": "Route graph data",
+                    "description": "Returns route graph with nodes and edges for visualization",
+                    "responses": {
+                        "200": {
+                            "description": "Route graph data",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "route_graph": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "nodes": {"type": "array", "items": {"type": "object"}},
+                                                    "edges": {"type": "array", "items": {"type": "object"}}
+                                                }
+                                            },
+                                            "metadata": {"type": "object"}
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "500": {"$ref": "#/components/responses/InternalServerError"}
+                    }
+                }
+            },
+            "/api/route/progress": {
+                "get": {
+                    "tags": ["route-analysis"],
+                    "summary": "Current progress tracking",
+                    "description": "Returns current player progress through the story",
+                    "responses": {
+                        "200": {
+                            "description": "Progress information",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "current_label": {"type": "string"},
+                                            "progress_percentage": {"type": "number"},
+                                            "words_seen": {"type": "integer"},
+                                            "total_words": {"type": "integer"}
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "500": {"$ref": "#/components/responses/InternalServerError"}
+                    }
+                }
+            },
+            "/api/route/wordcount": {
+                "get": {
+                    "tags": ["route-analysis"],
+                    "summary": "Word count analysis",
+                    "description": "Returns word count data for all labels",
+                    "parameters": [
+                        {
+                            "name": "force_refresh",
+                            "in": "query",
+                            "description": "Force refresh of word count cache",
+                            "required": False,
+                            "schema": {
+                                "type": "boolean",
+                                "default": False
+                            }
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Word count data",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "word_counts": {"type": "object"},
+                                            "total_words": {"type": "integer"},
+                                            "estimated_reading_time_minutes": {"type": "number"},
+                                            "labels_with_content": {"type": "integer"},
+                                            "cache_refreshed": {"type": "boolean"}
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "500": {"$ref": "#/components/responses/InternalServerError"}
+                    }
+                }
+            },
+            "/api/route/summary": {
+                "get": {
+                    "tags": ["route-analysis"],
+                    "summary": "Route summary statistics",
+                    "description": "Returns summary statistics about the story routes",
+                    "responses": {
+                        "200": {
+                            "description": "Route summary data",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "total_labels": {"type": "integer"},
+                                            "total_menus": {"type": "integer"},
+                                            "total_choices": {"type": "integer"},
+                                            "conditional_choices": {"type": "integer"}
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "500": {"$ref": "#/components/responses/InternalServerError"}
+                    }
+                }
+            },
+            "/api/save": {
+                "post": {
+                    "tags": ["control"],
+                    "summary": "Save game state",
+                    "description": "Saves the current game state to a slot",
+                    "requestBody": {
+                        "required": False,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "slot": {"type": "string", "description": "Save slot name (optional)"}
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Save result",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "success": {"type": "boolean"},
+                                            "slot": {"type": "string"}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/load": {
+                "post": {
+                    "tags": ["control"],
+                    "summary": "Load game state",
+                    "description": "Loads a saved game state from a slot",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "slot": {"type": "string", "description": "Save slot name to load"}
+                                    },
+                                    "required": ["slot"]
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Load result",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/Success"}
+                                }
+                            }
+                        },
+                        "400": {"$ref": "#/components/responses/BadRequest"}
+                    }
+                }
+            },
+            "/api/click": {
+                "post": {
+                    "tags": ["utilities"],
+                    "summary": "Send mouse click",
+                    "description": "Sends a mouse click at specified coordinates",
+                    "requestBody": {
+                        "required": False,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "x": {"type": "integer", "default": 400, "description": "X coordinate"},
+                                        "y": {"type": "integer", "default": 300, "description": "Y coordinate"},
+                                        "button": {"type": "integer", "default": 1, "description": "Mouse button (1=left, 2=middle, 3=right)"}
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Click result",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/Success"}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/key": {
+                "post": {
+                    "tags": ["utilities"],
+                    "summary": "Send key press",
+                    "description": "Sends a key press event",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "key": {"type": "string", "description": "Key to press"}
+                                    },
+                                    "required": ["key"]
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Key press result",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/Success"}
+                                }
+                            }
+                        },
+                        "400": {"$ref": "#/components/responses/BadRequest"}
+                    }
+                }
+            },
+            "/api/screenshot": {
+                "get": {
+                    "tags": ["utilities"],
+                    "summary": "Take screenshot",
+                    "description": "Takes a screenshot of the current game state",
+                    "responses": {
+                        "200": {
+                            "description": "Screenshot image",
+                            "content": {
+                                "image/png": {
+                                    "schema": {
+                                        "type": "string",
+                                        "format": "binary"
+                                    }
+                                }
+                            }
+                        },
+                        "500": {"$ref": "#/components/responses/InternalServerError"}
+                    }
+                }
+            },
+            "/api/exec": {
+                "get": {
+                    "tags": ["utilities"],
+                    "summary": "Get exec endpoint documentation",
+                    "description": "Returns documentation for the code execution endpoint",
+                    "responses": {
+                        "200": {
+                            "description": "Endpoint documentation",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "endpoint": {"type": "string"},
+                                            "methods": {"type": "array", "items": {"type": "string"}},
+                                            "description": {"type": "string"},
+                                            "security_warning": {"type": "string"},
+                                            "parameters": {"type": "object"},
+                                            "capabilities": {"type": "array", "items": {"type": "string"}}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "post": {
+                    "tags": ["utilities"],
+                    "summary": "Execute Python code",
+                    "description": "Executes custom Python code in the game context. **WARNING: This provides full Python execution capabilities and should only be used in trusted development environments.**",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "code": {"type": "string", "description": "Python code to execute"},
+                                        "mode": {
+                                            "type": "string",
+                                            "enum": ["exec", "eval"],
+                                            "default": "exec",
+                                            "description": "Execution mode: 'exec' for statements, 'eval' for expressions"
+                                        }
+                                    },
+                                    "required": ["code"]
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Code execution result",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "success": {"type": "boolean"},
+                                            "result": {"description": "Execution result (any type)"},
+                                            "mode": {"type": "string"}
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "400": {"$ref": "#/components/responses/BadRequest"},
+                        "500": {"$ref": "#/components/responses/InternalServerError"}
+                    }
+                }
+            }
+        },
+        "components": {
+            "schemas": {
+                "Error": {
+                    "type": "object",
+                    "properties": {
+                        "error": {"type": "string"},
+                        "code": {"type": "integer"}
+                    },
+                    "required": ["error", "code"]
+                },
+                "Success": {
+                    "type": "object",
+                    "properties": {
+                        "success": {"type": "boolean"}
+                    },
+                    "required": ["success"]
+                }
+            },
+            "responses": {
+                "BadRequest": {
+                    "description": "Bad request - missing or invalid parameters",
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/Error"}
+                        }
+                    }
+                },
+                "NotFound": {
+                    "description": "Endpoint not found",
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/Error"}
+                        }
+                    }
+                },
+                "InternalServerError": {
+                    "description": "Internal server error",
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/Error"}
+                        }
+                    }
+                }
+            }
+        }
+    }
 
 
 class TestingAPIHandler(BaseHTTPRequestHandler):
@@ -117,16 +1090,31 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
                 self._handle_route_requirements()
             elif path == '/api/route/test':
                 self._handle_route_test()
+            elif path == '/api/route/cache-status':
+                self._handle_route_cache_status()
             elif path == '/visualizer':
                 self._serve_route_visualizer()
             elif path == '/api/route/open-visualizer':
                 self._open_route_visualizer()
+            elif path == '/docs' or path == '/swagger':
+                self._serve_swagger_ui()
+            elif path == '/openapi.json':
+                self._serve_openapi_spec()
             else:
                 self._send_error(404, "Endpoint not found")
                 
         except Exception as e:
             self._send_error(500, str(e))
-    
+
+    def do_OPTIONS(self):
+        """Handle OPTIONS requests for CORS preflight."""
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        self.send_header('Access-Control-Max-Age', '86400')
+        self.end_headers()
+
     def do_POST(self):
         """Handle POST requests."""
         try:
@@ -182,11 +1170,28 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
     
     def _handle_status(self):
         """Handle status endpoint."""
+        # Get project information
+        project_path = None
+        project_name = None
+        try:
+            import renpy
+            if hasattr(renpy, 'config') and hasattr(renpy.config, 'gamedir'):
+                project_path = renpy.config.gamedir
+                if project_path:
+                    # Get the parent directory (project root) from the game directory
+                    import os
+                    project_path = os.path.dirname(project_path)
+                    project_name = os.path.basename(project_path)
+        except:
+            pass
+
         status = {
             'running': True,
             'interface_enabled': self.testing_interface.is_enabled(),
             'current_label': self.testing_interface.get_current_label(),
-            'timestamp': time.time()
+            'timestamp': time.time(),
+            'project_path': project_path,
+            'project_name': project_name
         }
         self._send_json_response(status)
     
@@ -259,7 +1264,7 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
         if choice is None:
             self._send_error(400, "Missing 'choice' parameter")
             return
-        
+
         success = self.testing_interface.select_choice(choice)
         self._send_json_response({'success': success})
     
@@ -327,22 +1332,28 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
             self._send_json_response({
                 'endpoint': '/api/exec',
                 'methods': ['POST'],
-                'description': 'Execute custom Python code in the game context',
-                'security_warning': 'This endpoint is for testing/debugging only. Use with caution and never expose in production.',
+                'description': 'Execute custom Python code in the game context with full capabilities',
+                'security_warning': 'This endpoint provides FULL Python execution including imports, file I/O, and system access. Use only in trusted development environments. NEVER expose in production.',
                 'parameters': {
                     'code': 'Python code to execute (string)',
                     'mode': 'Optional: "eval" for expressions, "exec" for statements (default: "exec")'
                 },
-                'safety_notes': [
-                    'Limited to safe built-in functions only',
-                    'No file system access or imports allowed',
-                    'Access to renpy and store modules provided',
-                    'Intended for game state manipulation during testing'
+                'capabilities': [
+                    'Full Python execution with all built-in functions',
+                    'Import any Python module (import statements allowed)',
+                    'File system access (open, read, write files)',
+                    'Network access and system calls',
+                    'Access to renpy and store modules',
+                    'Pre-imported common modules: sys, os, json, time, datetime, re, math, random'
                 ],
                 'examples': [
+                    {'code': 'import requests; print("Requests available")', 'mode': 'exec'},
                     {'code': 'renpy.store.persistent.quick_menu = True', 'mode': 'exec'},
                     {'code': 'renpy.store.persistent.quick_menu', 'mode': 'eval'},
-                    {'code': 'print("Hello from custom code!")'}
+                    {'code': 'print("Hello from custom code!")', 'mode': 'exec'},
+                    {'code': 'os.getcwd()', 'mode': 'eval'},
+                    {'code': 'with open("debug.txt", "w") as f: f.write("Debug info")', 'mode': 'exec'},
+                    {'code': '[x**2 for x in range(5)]', 'mode': 'eval'}
                 ]
             })
             return
@@ -371,90 +1382,187 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
     
     def _execute_code_safely(self, code, mode):
         """
-        Execute code safely in the game context.
-        
+        Execute code in the game context with full Python capabilities.
+
         SECURITY CONSIDERATIONS:
-        - Restricted builtins to prevent file system access, imports, etc.
-        - No access to dangerous functions like open(), exec(), eval(), __import__()
-        - Limited to safe data types and Ren'Py game manipulation
-        - This is intended for testing/debugging, not production use
-        
+        - This endpoint provides full Python execution capabilities including imports
+        - Intended for testing/debugging environments only
+        - Should not be exposed in production environments
+        - Access to file system, network, and all Python modules is allowed
+        - Use with caution and only in trusted development environments
+
         Args:
             code (str): Python code to execute
             mode (str): Either 'exec' or 'eval'
-            
+
         Returns:
             Result of code execution or success message
         """
         try:
-            # Create a safe execution environment with access to renpy modules
+            # Create execution environment with full Python capabilities
+            # Include commonly used modules for convenience
+            import sys
+            import os
+            import json
+            import time
+            import datetime
+            import re
+            import math
+            import random
+
             exec_globals = {
+                # Core Python modules
+                '__builtins__': __builtins__,
+                '__import__': __import__,
+
+                # Ren'Py specific
                 'renpy': renpy,
                 'store': renpy.store,
-                '__builtins__': {
-                    # Safe built-ins only - no file I/O, no imports, no dangerous functions
-                    'len': len,
-                    'str': str,
-                    'int': int,
-                    'float': float,
-                    'bool': bool,
-                    'list': list,
-                    'dict': dict,
-                    'tuple': tuple,
-                    'set': set,
-                    'range': range,
-                    'enumerate': enumerate,
-                    'zip': zip,
-                    'min': min,
-                    'max': max,
-                    'sum': sum,
-                    'sorted': sorted,
-                    'reversed': reversed,
-                    'print': print,
-                    'type': type,
-                    'hasattr': hasattr,
-                    'getattr': getattr,
-                    'setattr': setattr,
-                    'isinstance': isinstance,
-                    'issubclass': issubclass,
-                    'chr': chr,
-                    'ord': ord,
-                    # Explicitly excluded dangerous functions:
-                    # - open, file, input, raw_input (file I/O)
-                    # - exec, eval, compile (__import__ (code execution)
-                    # - globals, locals, vars (access to global state)
-                    # - __import__, reload (module loading)
-                    # - exit, quit (program termination)
-                }
+
+                # Common Python modules (pre-imported for convenience)
+                'sys': sys,
+                'os': os,
+                'json': json,
+                'time': time,
+                'datetime': datetime,
+                're': re,
+                'math': math,
+                'random': random,
+
+                # Additional useful functions
+                'print': print,
+                'len': len,
+                'str': str,
+                'int': int,
+                'float': float,
+                'bool': bool,
+                'list': list,
+                'dict': dict,
+                'tuple': tuple,
+                'set': set,
+                'range': range,
+                'enumerate': enumerate,
+                'zip': zip,
+                'min': min,
+                'max': max,
+                'sum': sum,
+                'sorted': sorted,
+                'reversed': reversed,
+                'type': type,
+                'hasattr': hasattr,
+                'getattr': getattr,
+                'setattr': setattr,
+                'delattr': delattr,
+                'isinstance': isinstance,
+                'issubclass': issubclass,
+                'chr': chr,
+                'ord': ord,
+                'abs': abs,
+                'round': round,
+                'pow': pow,
+                'divmod': divmod,
+                'hex': hex,
+                'oct': oct,
+                'bin': bin,
+                'format': format,
+                'repr': repr,
+                'ascii': ascii,
+                'vars': vars,
+                'dir': dir,
+                'id': id,
+                'hash': hash,
+                'callable': callable,
+                'iter': iter,
+                'next': next,
+                'filter': filter,
+                'map': map,
+                'any': any,
+                'all': all,
+                'open': open,
+                'exec': exec,
+                'eval': eval,
+                'compile': compile,
+                'globals': globals,
+                'locals': locals,
             }
-            
+
             exec_locals = {}
-            
+
             if mode == 'eval':
                 # Evaluate expression and return result
                 result = eval(code, exec_globals, exec_locals)
-                # Convert result to string for JSON serialization
-                if result is None:
-                    return None
-                elif isinstance(result, (str, int, float, bool, list, dict)):
-                    return result
-                else:
-                    return str(result)
+                # Convert result to JSON-serializable format
+                return self._serialize_result(result)
             else:
                 # Execute statements
                 exec(code, exec_globals, exec_locals)
                 # Return any variables that were created
                 if exec_locals:
-                    # Filter out built-in variables
-                    user_vars = {k: v for k, v in exec_locals.items() 
-                               if not k.startswith('__')}
+                    # Filter out built-in variables and modules, but include functions
+                    user_vars = {}
+                    for k, v in exec_locals.items():
+                        if not k.startswith('__') and k not in exec_globals:
+                            user_vars[k] = v
+
                     if user_vars:
                         # Convert to serializable format
-                        return {k: str(v) for k, v in user_vars.items()}
+                        return {k: self._serialize_result(v) for k, v in user_vars.items()}
                 return "Code executed successfully"
-                
+
         except Exception as e:
             raise Exception(f"Execution failed: {str(e)}")
+
+    def _serialize_result(self, result):
+        """
+        Convert execution result to JSON-serializable format.
+
+        Args:
+            result: The result to serialize
+
+        Returns:
+            JSON-serializable representation of the result
+        """
+        if result is None:
+            return None
+        elif isinstance(result, (str, int, float, bool)):
+            return result
+        elif isinstance(result, (list, tuple)):
+            try:
+                return [self._serialize_result(item) for item in result]
+            except:
+                return str(result)
+        elif isinstance(result, dict):
+            try:
+                return {str(k): self._serialize_result(v) for k, v in result.items()}
+            except:
+                return str(result)
+        elif callable(result):
+            # For functions and callable objects
+            try:
+                return {
+                    '__type__': 'function' if hasattr(result, '__name__') else 'callable',
+                    '__name__': getattr(result, '__name__', 'unknown'),
+                    '__module__': getattr(result, '__module__', 'unknown'),
+                    '__doc__': getattr(result, '__doc__', None),
+                    '__str__': str(result),
+                    '__repr__': repr(result)
+                }
+            except:
+                return str(result)
+        elif hasattr(result, '__dict__'):
+            # For objects with attributes, try to serialize their dict representation
+            try:
+                return {
+                    '__type__': type(result).__name__,
+                    '__module__': getattr(type(result), '__module__', 'unknown'),
+                    '__str__': str(result),
+                    '__repr__': repr(result)
+                }
+            except:
+                return str(result)
+        else:
+            # Fallback to string representation
+            return str(result)
     
     def _send_json_response(self, data):
         """Send JSON response."""
@@ -463,6 +1571,8 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(response)))
         self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
         self.end_headers()
         self.wfile.write(response.encode('utf-8'))
     
@@ -474,6 +1584,8 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(response)))
         self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
         self.end_headers()
         self.wfile.write(response.encode('utf-8'))
     
@@ -691,13 +1803,23 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
                 }
                 metadata = analysis_data.get('metadata', {})
 
-            # Get summary statistics for metadata if not already present
+            # Ensure metadata includes node and edge counts
+            if not metadata.get('nodes_count'):
+                metadata['nodes_count'] = len(route_graph.get('nodes', []))
+            if not metadata.get('edges_count'):
+                metadata['edges_count'] = len(route_graph.get('edges', []))
+            
+            # Only get summary data if we don't have essential metadata
             if not metadata or not metadata.get('total_labels'):
                 summary_data = self._get_route_summary_data(analyzer)
+                # Preserve existing word count if we have it
+                existing_word_count = metadata.get('total_words', 0) if metadata else 0
+                summary_word_count = summary_data.get('total_words', 0)
+                
                 metadata = {
                     'total_labels': summary_data.get('total_labels', 0),
                     'total_choices': summary_data.get('total_choices', 0),
-                    'total_words': summary_data.get('total_words', 0),
+                    'total_words': existing_word_count if existing_word_count > 0 else summary_word_count,
                     'total_menus': summary_data.get('total_menus', 0),
                     'nodes_count': len(route_graph.get('nodes', [])),
                     'edges_count': len(route_graph.get('edges', []))
@@ -729,11 +1851,14 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
             edges = analysis_data.get('edges', [])
             total_choices = sum(1 for edge in edges if edge.get('type') == 'choice')
 
+            # Get word counts from analysis data
+            total_words = analysis_data.get('metadata', {}).get('total_words', 0)
+            
             return {
                 'total_labels': total_labels,
                 'total_menus': total_menus,
                 'total_choices': total_choices,
-                'total_words': 0,  # Word count not implemented yet
+                'total_words': total_words,
                 'nodes_count': len(nodes),
                 'edges_count': len(edges)
             }
@@ -766,9 +1891,19 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
         """Handle GET /api/route/wordcount - get word count data."""
         try:
             from renpy.testing.route_analyzer import get_route_analyzer
+
             analyzer = get_route_analyzer()
 
-            analysis_data = analyzer.analyze_script()
+            # Check for force refresh parameter to ensure fresh word counts
+            parsed_url = urlparse(self.path)
+            query_params = parse_qs(parsed_url.query)
+            force_refresh = query_params.get('force_refresh', ['false'])[0].lower() == 'true'
+
+            if force_refresh:
+                # Specifically invalidate word count cache
+                analyzer.invalidate_word_count_cache()
+
+            analysis_data = analyzer.analyze_script(force_refresh=force_refresh)
             word_counts = analysis_data.get('word_counts', {})
 
             # Calculate additional metrics
@@ -779,7 +1914,8 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
                 'word_counts': word_counts,
                 'total_words': total_words,
                 'estimated_reading_time_minutes': estimated_reading_time,
-                'labels_with_content': len([label for label, count in word_counts.items() if count > 0])
+                'labels_with_content': len([label for label, count in word_counts.items() if count > 0]),
+                'cache_refreshed': force_refresh
             })
         except Exception as e:
             self._send_error(500, f"Failed to get word counts: {str(e)}")
@@ -797,6 +1933,18 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
             self._send_json_response(summary_data)
         except Exception as e:
             self._send_error(500, f"Failed to get route summary: {str(e)}")
+
+    def _handle_route_cache_status(self):
+        """Handle GET /api/route/cache-status - get cache status information."""
+        try:
+            from renpy.testing.route_analyzer import get_route_analyzer
+
+            analyzer = get_route_analyzer()
+            cache_status = analyzer.get_cache_status()
+
+            self._send_json_response(cache_status)
+        except Exception as e:
+            self._send_error(500, f"Failed to get cache status: {str(e)}")
 
     def _handle_route_requirements(self):
         """Handle GET /api/route/requirements - get choice requirements data."""
@@ -915,6 +2063,103 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             self._send_error(500, f"Failed to open visualizer: {str(e)}")
+
+    def _serve_openapi_spec(self):
+        """Serve the OpenAPI 3.0 specification as JSON."""
+        try:
+            spec = get_openapi_spec()
+            # Update the server URL to match the current request
+            host = self.headers.get('Host', f"{self.server.server_address[0]}:{self.server.server_address[1]}")
+            spec['servers'] = [
+                {
+                    "url": f"http://{host}",
+                    "description": "Local development server"
+                }
+            ]
+            self._send_json_response(spec)
+        except Exception as e:
+            self._send_error(500, f"Failed to serve OpenAPI spec: {str(e)}")
+
+    def _serve_swagger_ui(self):
+        """Serve the Swagger UI HTML page."""
+        try:
+            # Use relative URL to avoid CORS issues
+            openapi_url = "./openapi.json"
+
+            swagger_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ren'Py Debugging API - Swagger UI</title>
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@4.15.5/swagger-ui.css" />
+    <style>
+        html {{
+            box-sizing: border-box;
+            overflow: -moz-scrollbars-vertical;
+            overflow-y: scroll;
+        }}
+        *, *:before, *:after {{
+            box-sizing: inherit;
+        }}
+        body {{
+            margin:0;
+            background: #fafafa;
+        }}
+        .swagger-ui .topbar {{
+            background-color: #2c3e50;
+        }}
+        .swagger-ui .topbar .download-url-wrapper .select-label {{
+            color: #fff;
+        }}
+    </style>
+</head>
+<body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@4.15.5/swagger-ui-bundle.js"></script>
+    <script src="https://unpkg.com/swagger-ui-dist@4.15.5/swagger-ui-standalone-preset.js"></script>
+    <script>
+        window.onload = function() {{
+            const ui = SwaggerUIBundle({{
+                url: '{openapi_url}',
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "StandaloneLayout",
+                tryItOutEnabled: true,
+                requestInterceptor: function(request) {{
+                    // Add CORS headers for local development
+                    request.headers['Access-Control-Allow-Origin'] = '*';
+                    return request;
+                }},
+                responseInterceptor: function(response) {{
+                    return response;
+                }}
+            }});
+        }};
+    </script>
+</body>
+</html>"""
+
+            # Send HTML response
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(swagger_html)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+            self.end_headers()
+            self.wfile.write(swagger_html.encode('utf-8'))
+
+        except Exception as e:
+            self._send_error(500, f"Failed to serve Swagger UI: {str(e)}")
 
     def _handle_websocket_upgrade(self):
         """Handle WebSocket upgrade request."""
@@ -1122,20 +2367,28 @@ class WebSocketServer(object):
         
         self.running = True
         self.update_thread = threading.Thread(target=self._monitor_scene_changes)
-        self.update_thread.daemon = True
+        self.update_thread.daemon = True  # Use daemon threads so they don't prevent main process exit
         self.update_thread.start()
         print("[WebSocket] Started scene monitoring")
     
     def stop_monitoring(self):
         """Stop monitoring scene changes."""
         self.running = False
-        if self.update_thread:
-            self.update_thread.join(timeout=1.0)
-        
-        # Close all connections
+
+        # Close all connections first
         for conn in self.connections:
-            conn.close()
+            try:
+                conn.close()
+            except:
+                pass
         self.connections.clear()
+
+        # Wait for update thread to finish, but don't hang
+        if self.update_thread and self.update_thread.is_alive():
+            self.update_thread.join(timeout=0.5)  # Shorter timeout to prevent hanging
+            if self.update_thread.is_alive():
+                print("[WebSocket] Warning: Update thread did not stop cleanly")
+
         print("[WebSocket] Stopped scene monitoring")
     
     def _monitor_scene_changes(self):
@@ -1159,11 +2412,11 @@ class WebSocketServer(object):
                         'data': current_state
                     })
                 
-                time.sleep(0.5)  # Check for updates every 500ms
-                
+                time.sleep(1.0)  # Check for updates every 1 second (reduced frequency)
+
             except Exception as e:
                 print(f"[WebSocket] Scene monitoring error: {e}")
-                time.sleep(1.0)  # Wait longer on error
+                time.sleep(2.0)  # Wait longer on error
     
     def _create_state_hash(self, state):
         """Create a hash of the important state components for change detection."""
@@ -1208,10 +2461,17 @@ class TestingHTTPServer(object):
     
     def start(self):
         """Start the HTTP server."""
+        global _global_http_server
         if self.running:
             return True
-        
+
         try:
+            # Register this server globally for cleanup
+            _global_http_server = self
+
+            # Register shutdown hooks with Ren'Py
+            _register_shutdown_hooks()
+
             # Create handler class with testing interface
             def handler_factory(*args, **kwargs):
                 return TestingAPIHandler(self.testing_interface, *args, **kwargs)
@@ -1225,7 +2485,7 @@ class TestingHTTPServer(object):
                 self.server = HTTPServer((self.host, self.port), handler_factory)
                 print("Warning: Using single-threaded HTTPServer (ThreadingHTTPServer not available)")
             self.server_thread = threading.Thread(target=self.server.serve_forever)
-            self.server_thread.daemon = True
+            self.server_thread.daemon = True  # Use daemon threads so they don't prevent main process exit
             self.server_thread.start()
             self.running = True
             
@@ -1257,23 +2517,62 @@ class TestingHTTPServer(object):
         """Stop the HTTP server."""
         if not self.running:
             return
-        
+
         try:
+            self.running = False  # Set this first to prevent new operations
+
             # Stop WebSocket monitoring
             self.websocket_server.stop_monitoring()
-            
+
+            # Shutdown server
             if self.server:
                 self.server.shutdown()
                 self.server.server_close()
-            
-            if self.server_thread:
-                self.server_thread.join(timeout=1.0)
-            
-            self.running = False
+
+            # Wait for server thread to finish, but don't hang forever
+            if self.server_thread and self.server_thread.is_alive():
+                self.server_thread.join(timeout=1.0)  # Shorter timeout to prevent hanging
+                if self.server_thread.is_alive():
+                    print("Warning: Server thread did not stop cleanly")
+
             print("Testing API server stopped")
-            
+
         except Exception as e:
             print("Error stopping testing API server: {}".format(e))
+
+    def force_stop(self):
+        """Force stop the HTTP server with brutal immediate shutdown."""
+        if not self.running:
+            return
+
+        try:
+            print("Force stopping HTTP server...")
+            self.running = False
+
+            # Stop WebSocket monitoring immediately - don't wait for anything
+            try:
+                self.websocket_server.stop_monitoring()
+            except Exception:
+                pass
+
+            # Brutally shutdown the server - ignore all errors
+            if self.server:
+                try:
+                    self.server.shutdown()
+                except Exception:
+                    pass
+                try:
+                    self.server.server_close()
+                except Exception:
+                    pass
+
+            # Mark threads as None so they can be garbage collected
+            self.server_thread = None
+
+            print("HTTP API server force stopped")
+
+        except Exception as e:
+            print("Error force stopping HTTP server: {}".format(e))
     
     def is_running(self):
         """Check if server is running."""
