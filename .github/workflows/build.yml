@@ -105,6 +105,8 @@ jobs:
       run: |
         mkdir -p tars
         op read "op://renpy/MacOSX12.3.sdk.tar/MacOSX12.3.sdk.tar.bz2" > tars/MacOSX12.3.sdk.tar.bz2
+        ls -l tars
+        md5sum tars/MacOSX12.3.sdk.tar.bz2
       env:
         OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
 
