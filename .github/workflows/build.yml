@@ -91,6 +91,16 @@ jobs:
       with:
         submodules: recursive
 
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: /tmp/ccache
+        key: ccache-${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+        restore-keys: |
+          ccache-${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-
+          ccache-${{ matrix.platform }}-${{ runner.os }}-
+          ccache-${{ matrix.platform }}-
+
     - name: Download Cubism SDK
       run: |
         mkdir -p tars
@@ -104,18 +114,30 @@ jobs:
       run: |
         mkdir -p tars
         op read "op://renpy/MacOSX12.3.sdk.tar/MacOSX12.3.sdk.tar.bz2" --out-file tars/MacOSX12.3.sdk.tar.bz2
-        ls -l tars
-        md5sum tars/MacOSX12.3.sdk.tar.bz2
       env:
         OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+    - name: Cache build artifacts
+      uses: actions/cache@v4
+      with:
+        path: |
+          lib/
+          tmp/
+        key: build-artifacts-${{ matrix.platform }}-${{ hashFiles('tasks/**/*.py', 'renpybuild/**/*.py', 'tars/**') }}
+        restore-keys: |
+          build-artifacts-${{ matrix.platform }}-
+          build-artifacts-
+
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v1
 
     - name: Build for ${{ matrix.platform }}
       run: |
-        docker compose run --rm builder ./build.py --platform ${{ matrix.platform }}
-    
+        # Enable ccache for faster compilation
+        export CCACHE_DIR=/tmp/ccache
+        mkdir -p $CCACHE_DIR
+        docker compose run --rm -e CCACHE_DIR=/tmp/ccache -v $CCACHE_DIR:/tmp/ccache builder ./build.py --platform ${{ matrix.platform }}
+
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
