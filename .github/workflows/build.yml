@@ -1,0 +1,188 @@
+name: Build Ren'Py Engine
+
+on:
+  push:
+    branches: ['*']
+  pull_request:
+    branches: ['*']
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        platform: [linux]
+        arch: [x86_64]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
+      run: |
+        docker compose run --rm builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
+        path: |
+          lib/
+          !lib/**/*.pyc
+          !lib/**/__pycache__/
+        retention-days: 7
+
+  build-windows:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        platform: [windows]
+        arch: [x86_64]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
+      run: |
+        docker compose run --rm builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
+        path: |
+          lib/
+          !lib/**/*.pyc
+          !lib/**/__pycache__/
+        retention-days: 7
+
+  build-mac:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        platform: [mac]
+        arch: [arm64, x86_64]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
+      run: |
+        docker compose run --rm builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
+        path: |
+          lib/
+          !lib/**/*.pyc
+          !lib/**/__pycache__/
+        retention-days: 7
+
+  build-android-arm64:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      matrix:
+        platform: [android]
+        arch: [arm64_v8a]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
+      run: |
+        docker compose run --rm builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
+        path: |
+          lib/
+          !lib/**/*.pyc
+          !lib/**/__pycache__/
+        retention-days: 7
+
+  build-android-other:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        platform: [android]
+        arch: [armeabi_v7a]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
+      run: |
+        docker compose run --rm builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
+        path: |
+          lib/
+          !lib/**/*.pyc
+          !lib/**/__pycache__/
+        retention-days: 7
+
+  build-web:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        platform: [web]
+        arch: [wasm]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
+      run: |
+        docker compose run --rm builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
+        path: |
+          lib/
+          !lib/**/*.pyc
+          !lib/**/__pycache__/
+        retention-days: 7
