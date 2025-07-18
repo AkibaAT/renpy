@@ -50,6 +50,7 @@ init python in distribute:
     import plistlib
     import time
     import shutil
+    import platform
 
     def py(s):
         """
@@ -1535,9 +1536,7 @@ fix_dlc("renios", "renios")
 
             ext, directory, dmg, prepend = FORMATS[format]
 
-            mac_identity = self.build.get('mac_identity', None)
-
-            if dmg and (mac_identity is None):
+            if dmg and (platform.system() != 'Darwin' or not shutil.which('hdiutil')):
                 return
 
             if self.packagedest:

@@ -1,0 +1,334 @@
+name: Build Ren'Py Engine
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Run at 2 AM UTC every day
+  workflow_dispatch:  # Allow manual triggering
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v8.5.0
+
+jobs:
+  # Build Linux platform with all architectures
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Download Cubism SDK
+      run: |
+        mkdir -p tars
+        cd tars
+        curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v1
+
+    - name: Build for Linux (all architectures)
+      run: |
+        docker compose run --rm builder ./build.py --platform linux
+
+    - name: Create Linux artifact tar
+      run: |
+        tar -czf renpy-linux.tar.gz lib/ renios3/ renpy/__pycache__/ renpy/compat/__pycache__/ scripts/__pycache__/ tmp/ renpy.sh renpy3.sh steamapi.py
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-linux
+        path: renpy-linux.tar.gz
+        retention-days: 7
+
+  # Build Windows platform with all architectures
+  build-windows:
+    name: Build Windows
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Download Cubism SDK
+      run: |
+        mkdir -p tars
+        cd tars
+        curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v1
+
+    - name: Build for Windows (all architectures)
+      run: |
+        docker compose run --rm builder ./build.py --platform windows
+
+    - name: Create Windows artifact tar
+      run: |
+        tar -czf renpy-windows.tar.gz 7z.sfx lib/ renpy.exe renpy.sh renpy/__pycache__/ renpy/compat/__pycache__/ renpy3.exe renpy3.sh scripts/__pycache__/ steamapi.py tmp/
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-windows
+        path: renpy-windows.tar.gz
+        retention-days: 7
+
+  # Build Android platform with all architectures
+  build-android:
+    name: Build Android
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Download Cubism SDK
+      run: |
+        mkdir -p tars
+        cd tars
+        curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v1
+
+    - name: Build for Android (all architectures)
+      run: |
+        docker compose run --rm builder ./build.py --platform android
+
+    - name: Create Android artifact tar
+      run: |
+        tar -czf renpy-android.tar.gz lib/ rapt3/ renpy.sh renpy/__pycache__/ renpy/compat/__pycache__/ renpy3.sh scripts/__pycache__/ tmp/
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-android
+        path: renpy-android.tar.gz
+        retention-days: 7
+
+  # Build Web platform with all architectures
+  build-web:
+    name: Build Web
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Download Cubism SDK
+      run: |
+        mkdir -p tars
+        cd tars
+        curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v1
+
+    - name: Build for Web (all architectures)
+      run: |
+        docker compose run --rm builder ./build.py --platform web
+
+    - name: Create Web artifact tar
+      run: |
+        tar -czf renpy-web.tar.gz renpy/__pycache__/ renpy/compat/__pycache__/ scripts/__pycache__/ tmp/ web3/
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-web
+        path: renpy-web.tar.gz
+        retention-days: 7
+
+  # Build Mac platform with all architectures
+  build-mac:
+    name: Build Mac
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Download Cubism SDK
+      run: |
+        mkdir -p tars
+        cd tars
+        curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Install 1Password CLI
+      uses: 1password/install-cli-action@v1
+
+    - name: Download Mac SDK from 1Password
+      run: |
+        mkdir -p tars
+        op read "op://renpy/MacOSX12.3.sdk.tar/MacOSX12.3.sdk.tar.bz2" --out-file tars/MacOSX12.3.sdk.tar.bz2
+      env:
+        OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v1
+
+    - name: Build for Mac (all architectures)
+      run: |
+        docker compose run --rm builder ./build.py --platform mac
+
+    - name: Create Mac artifact tar
+      run: |
+        tar -czf renpy-mac.tar.gz lib/ renpy.sh renpy/__pycache__/ renpy/compat/__pycache__/ renpy3.app/ renpy3.sh scripts/__pycache__/ steamapi.py tmp/
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-mac
+        path: renpy-mac.tar.gz
+        retention-days: 7
+
+  # Build iOS platform with all architectures
+  build-ios:
+    name: Build iOS
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Download Cubism SDK
+      run: |
+        mkdir -p tars
+        cd tars
+        curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Install 1Password CLI
+      uses: 1password/install-cli-action@v1
+
+    - name: Download iOS SDK from 1Password
+      run: |
+        mkdir -p tars
+        op read "op://renpy/iPhoneOS14.0.sdk.tar/iPhoneOS14.0.sdk.tar.gz" --out-file tars/iPhoneOS14.0.sdk.tar.gz
+        op read "op://renpy/iPhoneSimulator14.0.sdk.tar/iPhoneSimulator14.0.sdk.tar.gz" --out-file tars/iPhoneSimulator14.0.sdk.tar.gz
+      env:
+        OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v1
+
+    - name: Build for iOS (all architectures)
+      run: |
+        docker compose run --rm builder ./build.py --platform ios
+
+    - name: Create iOS artifact tar
+      run: |
+        tar -czf renpy-ios.tar.gz lib/ renios3/ renpy.sh renpy/__pycache__/ renpy/compat/__pycache__/ renpy3.sh scripts/__pycache__/ tmp/
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-ios
+        path: renpy-ios.tar.gz
+        retention-days: 7
+
+  distribute:
+    runs-on: ubuntu-24.04
+    needs: [build-linux, build-windows, build-android, build-web, build-mac, build-ios]
+    #if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Download all build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts/
+
+    - name: Extract all build artifacts
+      run: |
+        for file in artifacts/*/*.tar.gz; do tar -xzf "$file"; done
+
+    - name: Install 1Password CLI
+      uses: 1password/install-cli-action@v1
+
+    - name: Download Mac SDK from 1Password
+      run: |
+        mkdir -p tars
+        op read "op://renpy/renpy_private/renpy_private.pem" --out-file renpy_private.pem
+        op read "op://renpy/update/update.pem" --out-file update.pem
+      env:
+        OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v1
+
+    - name: Create Ren'Py SDK distribution
+      run: |
+        docker compose run --rm builder bash -c "cd renpy && ./lib/py3-linux-x86_64/python distribute.py --nosign"
+
+    - name: Determine release type and tag
+      id: release_info
+      run: |
+        if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+          echo "is_release=true" >> $GITHUB_OUTPUT
+          echo "release_tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          echo "release_title=Ren'Py ${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          echo "is_prerelease=false" >> $GITHUB_OUTPUT
+        else
+          echo "is_release=false" >> $GITHUB_OUTPUT
+          echo "release_tag=nightly" >> $GITHUB_OUTPUT
+          echo "release_title=Nightly Build" >> $GITHUB_OUTPUT
+          echo "is_prerelease=true" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Upload release
+      run: |
+        RELEASE_TAG="${{ steps.release_info.outputs.release_tag }}"
+        RELEASE_TITLE="${{ steps.release_info.outputs.release_title }}"
+        IS_PRERELEASE="${{ steps.release_info.outputs.is_prerelease }}"
+        
+        # Delete existing release and tag if it exists (mainly for nightly)
+        gh release delete "$RELEASE_TAG" --yes || true
+        git push --delete origin "$RELEASE_TAG" || true
+        
+        # Create release with explicit target commit
+        if [ "$IS_PRERELEASE" = "true" ]; then
+          gh release create "$RELEASE_TAG" --title "$RELEASE_TITLE" --notes "Automated build from commit ${{ github.sha }}" --prerelease --target "${{ github.sha }}"
+        else
+          gh release create "$RELEASE_TAG" --title "$RELEASE_TITLE" --notes "Ren'Py release" --target "${{ github.sha }}"
+        fi
+        
+        # Upload all archive files
+        gh release upload "$RELEASE_TAG" dl/*/*.zip dl/*/*.tar.gz dl/*/*.tar.bz2 dl/*/*.7z.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

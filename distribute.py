@@ -260,7 +260,7 @@ def main():
     if not args.fast:
         subprocess.check_call([
             "scripts/sign_update.py",
-            "/home/tom/ab/keys/renpy_private.pem",
+            "renpy_private.pem",
             os.path.join(destination, "updates.json"),
             ])
 

@@ -258,10 +258,17 @@ init python:
 
     # Mac signing options.
     import os
+    import platform
     build.mac_identity = os.environ.get("RENPY_MAC_IDENTITY", None)
-    build.mac_codesign_command = [ config.renpy_base + "/scripts/mac/mac_sign_client.sh", "{identity}", "{app}" ]
-    build.mac_create_dmg_command = [ config.renpy_base + "/scripts/mac/mac_dmg_client.sh", "{identity}", "{volname}", "{sourcedir}", "{dmg}" ]
-    build.mac_codesign_dmg_command = [ "/bin/true" ]
+
+    if build.mac_identity:
+        # Use remote signing when identity is available
+        build.mac_codesign_command = [ config.renpy_base + "/scripts/mac/mac_sign_client.sh", "{identity}", "{app}" ]
+        build.mac_codesign_dmg_command = [ "/bin/true" ]
+    else:
+        # Use local creation without signing when no identity is available
+        build.mac_codesign_command = [ "/bin/true" ]  # Skip app signing
+        build.mac_codesign_dmg_command = [ "/bin/true" ]  # Skip DMG signing
 
 
     # Clear out various file patterns.
@@ -411,6 +418,8 @@ init python:
     build.classify_renpy("lib/**/libpython*.dll", None)
 
     build.classify_renpy("lib/**/*steam_api*", "steam")
+    build.classify_renpy("steamapi.py", "steam")
+    build.classify_renpy("lib/**/steamapi.pyc", "steam")
     build.classify_renpy("lib/**/*Live2D*", None)
     build.classify_renpy("lib/**/*live2d*", None)
 

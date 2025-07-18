@@ -602,9 +602,11 @@ init -1500 python in build:
 
         if mac_identity:
             rv["mac_identity"] = mac_identity
-            rv["mac_codesign_command"] = mac_codesign_command
-            rv["mac_create_dmg_command"] = mac_create_dmg_command
-            rv["mac_codesign_dmg_command"] = mac_codesign_dmg_command
+
+        # Always include DMG commands (they can work without signing)
+        rv["mac_codesign_command"] = mac_codesign_command
+        rv["mac_create_dmg_command"] = mac_create_dmg_command
+        rv["mac_codesign_dmg_command"] = mac_codesign_dmg_command
 
         rv["mac_info_plist"] = mac_info_plist
 
