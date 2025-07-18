@@ -7,77 +7,260 @@ on:
     branches: ['*']
 
 jobs:
-  # build-linux:
-  #   runs-on: ubuntu-24.04
-  #   strategy:
-  #     matrix:
-  #       platform: [linux]
-  #       arch: [x86_64]
-  #
-  #   steps:
-  #   - name: Checkout code
-  #     uses: actions/checkout@v4
-  #     with:
-  #       submodules: recursive
-  #
-  #   - name: Download Cubism SDK
-  #     run: |
-  #       mkdir -p tars
-  #       cd tars
-  #       curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
-  #
-  #   - name: Set up Docker Buildx
-  #     uses: docker/setup-buildx-action@v3
-  #
-  #   - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
-  #     run: |
-  #       docker compose run --rm builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
-  #
-  #   - name: Upload build artifacts
-  #     uses: actions/upload-artifact@v4
-  #     with:
-  #       name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
-  #       path: |
-  #         lib/
-  #         !lib/**/*.pyc
-  #         !lib/**/__pycache__/
-  #       retention-days: 7
+  build-linux:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        platform: [linux]
+        arch: [x86_64]
 
-  # build-windows:
-  #   runs-on: ubuntu-24.04
-  #   strategy:
-  #     matrix:
-  #       platform: [windows]
-  #       arch: [x86_64]
-  #
-  #   steps:
-  #   - name: Checkout code
-  #     uses: actions/checkout@v4
-  #     with:
-  #       submodules: recursive
-  #
-  #   - name: Download Cubism SDK
-  #     run: |
-  #       mkdir -p tars
-  #       cd tars
-  #       curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
-  #
-  #   - name: Set up Docker Buildx
-  #     uses: docker/setup-buildx-action@v3
-  #
-  #   - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
-  #     run: |
-  #       docker compose run --rm builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
-  #
-  #   - name: Upload build artifacts
-  #     uses: actions/upload-artifact@v4
-  #     with:
-  #       name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
-  #       path: |
-  #         lib/
-  #         !lib/**/*.pyc
-  #         !lib/**/__pycache__/
-  #       retention-days: 7
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: /tmp/ccache
+        key: ccache-${{ matrix.platform }}-${{ matrix.arch }}-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+        restore-keys: |
+          ccache-${{ matrix.platform }}-${{ matrix.arch }}-${{ runner.os }}-${{ runner.arch }}-
+          ccache-${{ matrix.platform }}-${{ matrix.arch }}-${{ runner.os }}-
+          ccache-${{ matrix.platform }}-${{ matrix.arch }}-
+
+    - name: Download Cubism SDK
+      run: |
+        mkdir -p tars
+        cd tars
+        curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v1
+
+    - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
+      run: |
+        # Enable ccache for faster compilation
+        export CCACHE_DIR=/tmp/ccache
+        mkdir -p $CCACHE_DIR
+        docker compose run --rm -e CCACHE_DIR=/tmp/ccache -v $CCACHE_DIR:/tmp/ccache builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
+        path: |
+          lib/
+          !lib/**/*.pyc
+          !lib/**/__pycache__/
+        retention-days: 7
+
+  build-windows:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        platform: [windows]
+        arch: [x86_64]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: /tmp/ccache
+        key: ccache-${{ matrix.platform }}-${{ matrix.arch }}-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+        restore-keys: |
+          ccache-${{ matrix.platform }}-${{ matrix.arch }}-${{ runner.os }}-${{ runner.arch }}-
+          ccache-${{ matrix.platform }}-${{ matrix.arch }}-${{ runner.os }}-
+          ccache-${{ matrix.platform }}-${{ matrix.arch }}-
+
+    - name: Download Cubism SDK
+      run: |
+        mkdir -p tars
+        cd tars
+        curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v1
+
+    - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
+      run: |
+        # Enable ccache for faster compilation
+        export CCACHE_DIR=/tmp/ccache
+        mkdir -p $CCACHE_DIR
+        docker compose run --rm -e CCACHE_DIR=/tmp/ccache -v $CCACHE_DIR:/tmp/ccache builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
+        path: |
+          lib/
+          !lib/**/*.pyc
+          !lib/**/__pycache__/
+        retention-days: 7
+
+  build-android-arm64:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      matrix:
+        platform: [android]
+        arch: [arm64_v8a]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: /tmp/ccache
+        key: ccache-${{ matrix.platform }}-${{ matrix.arch }}-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+        restore-keys: |
+          ccache-${{ matrix.platform }}-${{ matrix.arch }}-${{ runner.os }}-${{ runner.arch }}-
+          ccache-${{ matrix.platform }}-${{ matrix.arch }}-${{ runner.os }}-
+          ccache-${{ matrix.platform }}-${{ matrix.arch }}-
+
+    - name: Download Cubism SDK
+      run: |
+        mkdir -p tars
+        cd tars
+        curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v1
+
+    - name: Build Android toolchain
+      run: |
+        # Build just the Android toolchain and environment setup
+        docker compose run --rm builder ./build.py --platform android --arch ${{ matrix.arch }} --stop build-toolchain
+
+    - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
+      run: |
+        # Enable ccache for faster compilation
+        export CCACHE_DIR=/tmp/ccache
+        mkdir -p $CCACHE_DIR
+        docker compose run --rm -e CCACHE_DIR=/tmp/ccache -v $CCACHE_DIR:/tmp/ccache builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
+        path: |
+          lib/
+          !lib/**/*.pyc
+          !lib/**/__pycache__/
+        retention-days: 7
+
+  build-android-other:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        platform: [android]
+        arch: [armeabi_v7a]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: /tmp/ccache
+        key: ccache-${{ matrix.platform }}-${{ matrix.arch }}-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+        restore-keys: |
+          ccache-${{ matrix.platform }}-${{ matrix.arch }}-${{ runner.os }}-${{ runner.arch }}-
+          ccache-${{ matrix.platform }}-${{ matrix.arch }}-${{ runner.os }}-
+          ccache-${{ matrix.platform }}-${{ matrix.arch }}-
+
+    - name: Download Cubism SDK
+      run: |
+        mkdir -p tars
+        cd tars
+        curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v1
+
+    - name: Build Android toolchain
+      run: |
+        # Build just the Android toolchain and environment setup
+        docker compose run --rm builder ./build.py --platform android --arch ${{ matrix.arch }} --stop build-toolchain
+
+    - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
+      run: |
+        # Enable ccache for faster compilation
+        export CCACHE_DIR=/tmp/ccache
+        mkdir -p $CCACHE_DIR
+        docker compose run --rm -e CCACHE_DIR=/tmp/ccache -v $CCACHE_DIR:/tmp/ccache builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
+        path: |
+          lib/
+          !lib/**/*.pyc
+          !lib/**/__pycache__/
+        retention-days: 7
+
+  build-web:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        platform: [web]
+        arch: [wasm]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: /tmp/ccache
+        key: ccache-${{ matrix.platform }}-${{ matrix.arch }}-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+        restore-keys: |
+          ccache-${{ matrix.platform }}-${{ matrix.arch }}-${{ runner.os }}-${{ runner.arch }}-
+          ccache-${{ matrix.platform }}-${{ matrix.arch }}-${{ runner.os }}-
+          ccache-${{ matrix.platform }}-${{ matrix.arch }}-
+
+    - name: Download Cubism SDK
+      run: |
+        mkdir -p tars
+        cd tars
+        curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v1
+
+    - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
+      run: |
+        # Enable ccache for faster compilation
+        export CCACHE_DIR=/tmp/ccache
+        mkdir -p $CCACHE_DIR
+        docker compose run --rm -e CCACHE_DIR=/tmp/ccache -v $CCACHE_DIR:/tmp/ccache builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
+        path: |
+          lib/
+          !lib/**/*.pyc
+          !lib/**/__pycache__/
+        retention-days: 7
 
   build-mac:
     runs-on: ubuntu-24.04
@@ -148,110 +331,47 @@ jobs:
           !lib/**/__pycache__/
         retention-days: 7
 
-  # build-android-arm64:
-  #   runs-on: ubuntu-24.04-arm
-  #   strategy:
-  #     matrix:
-  #       platform: [android]
-  #       arch: [arm64_v8a]
-  #
-  #   steps:
-  #   - name: Checkout code
-  #     uses: actions/checkout@v4
-  #     with:
-  #       submodules: recursive
-  #
-  #   - name: Download Cubism SDK
-  #     run: |
-  #       mkdir -p tars
-  #       cd tars
-  #       curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
-  #
-  #   - name: Set up Docker Buildx
-  #     uses: docker/setup-buildx-action@v3
-  #
-  #   - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
-  #     run: |
-  #       docker compose run --rm builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
-  #
-  #   - name: Upload build artifacts
-  #     uses: actions/upload-artifact@v4
-  #     with:
-  #       name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
-  #       path: |
-  #         lib/
-  #         !lib/**/*.pyc
-  #         !lib/**/__pycache__/
-  #       retention-days: 7
+  distribute:
+    runs-on: ubuntu-24.04
+    needs: [build-linux, build-windows, build-android-arm64, build-android-other, build-web, build-mac]
+    #if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
 
-  # build-android-other:
-  #   runs-on: ubuntu-24.04
-  #   strategy:
-  #     matrix:
-  #       platform: [android]
-  #       arch: [armeabi_v7a]
-  #
-  #   steps:
-  #   - name: Checkout code
-  #     uses: actions/checkout@v4
-  #     with:
-  #       submodules: recursive
-  #
-  #   - name: Download Cubism SDK
-  #     run: |
-  #       mkdir -p tars
-  #       cd tars
-  #       curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
-  #
-  #   - name: Set up Docker Buildx
-  #     uses: docker/setup-buildx-action@v3
-  #
-  #   - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
-  #     run: |
-  #       docker compose run --rm builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
-  #
-  #   - name: Upload build artifacts
-  #     uses: actions/upload-artifact@v4
-  #     with:
-  #       name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
-  #       path: |
-  #         lib/
-  #         !lib/**/*.pyc
-  #         !lib/**/__pycache__/
-  #       retention-days: 7
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
-  # build-web:
-  #   runs-on: ubuntu-24.04
-  #   strategy:
-  #     matrix:
-  #       platform: [web]
-  #       arch: [wasm]
-  #
-  #   steps:
-  #   - name: Checkout code
-  #     uses: actions/checkout@v4
-  #     with:
-  #       submodules: recursive
-  #
-  #   - name: Download Cubism SDK
-  #     run: |
-  #       mkdir -p tars
-  #       cd tars
-  #       curl -L -o CubismSdkForNative-5-r.4.1.zip https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
-  #
-  #   - name: Set up Docker Buildx
-  #     uses: docker/setup-buildx-action@v3
-  #
-  #   - name: Build for ${{ matrix.platform }} ${{ matrix.arch }}
-  #     run: |
-  #       docker compose run --rm builder ./build.py --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
-  #
-  #   - name: Upload build artifacts
-  #     uses: actions/upload-artifact@v4
-  #     with:
-  #       name: renpy-${{ matrix.platform }}-${{ matrix.arch }}
-  #       path: |
-  #         lib/
-  #         !lib/**/*.pyc
-  #         !lib/**/__pycache__/
-  #       retention-days: 7
+    - name: Download all build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts/
+
+    - name: Restore build artifacts to lib directory
+      run: |
+        # Copy all platform libraries to the lib directory
+        for platform_dir in artifacts/renpy-*/; do
+          if [ -d "$platform_dir/lib" ]; then
+            cp -r "$platform_dir/lib"/* lib/ || true
+          fi
+        done
+
+        # List what we have
+        echo "Available libraries:"
+        ls -la lib/
+
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v1
+
+    - name: Create Ren'Py SDK distribution
+      run: |
+        # Use the distribute.py script to create the final SDK (without code signing)
+        docker compose run --rm builder renpy/lib/py3-linux-x86_64/python renpy/distribute.py --nosign --version dev-build
+
+    - name: Upload SDK distribution
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-sdk-${{ github.sha }}
+        path: dist/
+        retention-days: 30
+
