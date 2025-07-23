@@ -596,6 +596,23 @@ def main():
             except Exception as e:
                 print(f"Warning: Failed to start API server: {e}")
 
+        # Check for Debug Adapter Protocol server startup
+        if hasattr(renpy.game.args, 'dap') and renpy.game.args.dap:
+            try:
+                debug_port = getattr(renpy.game.args, 'debug_port', 5678)
+                
+                # Start the Debug Adapter Protocol server
+                from renpy.testing.debugger import enable_vscode_debugging
+                enable_vscode_debugging(port=debug_port, wait_for_client=False)
+                print(f"Debug server started on localhost:{debug_port}")
+                print(f"Connect your VSCode debugger to localhost:{debug_port}")
+                print("Set breakpoints in .rpy files - they will work automatically!")
+                
+            except ImportError:
+                print("Warning: debugpy not available. Debug server not started.")
+            except Exception as e:
+                print(f"Warning: Failed to start debug server: {e}")
+
         # Start things running.
         restart = None
 
@@ -604,6 +621,10 @@ def main():
                 del renpy.session["traceback_load"]
 
             if restart:
+                # Restore debugger state after FullRestartException
+                if hasattr(renpy, 'debugger') and renpy.debugger:
+                    renpy.debugger.restore_after_reload()
+                
                 renpy.display.screen.before_restart()
 
             try:
@@ -617,6 +638,10 @@ def main():
                 raise
 
             except game.FullRestartException as e:
+                # Clean up debugger state before restart
+                if hasattr(renpy, 'debugger') and renpy.debugger:
+                    renpy.debugger.prepare_for_reload()
+                
                 restart = e.reason
 
             finally:

@@ -403,8 +403,16 @@ def bootstrap(renpy_base):
                 exit_status = 0
 
             except renpy.game.UtterRestartException:
+                # Clean up debugger state before restart
+                if hasattr(renpy, 'debugger') and renpy.debugger:
+                    renpy.debugger.prepare_for_reload()
+                
                 # On an UtterRestart, reload Ren'Py.
                 renpy.reload_all()
+                
+                # Restore debugger state after restart
+                if hasattr(renpy, 'debugger') and renpy.debugger:
+                    renpy.debugger.restore_after_reload()
 
                 exit_status = None
 

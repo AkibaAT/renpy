@@ -12,6 +12,13 @@ define e = Character(_('Eileen'), color="#c8ffc8")
 
 init python:
 
+    def show_countdown(st, at):
+        if st > 5.0:
+            return Text("0.0"), None
+        else:
+            d = Text("{:.1f}".format(5.0 - st))
+            return d, 0.1
+
     # A list of section and tutorial objects.
     tutorials = [ ]
 
@@ -91,6 +98,9 @@ init python:
     Tutorial("demo_minigame", _("Minigames and CDDs"))
     Tutorial("translations", _("Translations"))
 
+
+image countdown = DynamicDisplayable(show_countdown)
+
 screen tutorials(adj):
 
     frame:
@@ -152,6 +162,12 @@ label start:
     window show
 
     e "Hi! My name is Eileen, and I'd like to welcome you to the Ren'Py tutorial."
+    e "Hi2! My name is Eileen, and I'd like to welcome you to the Ren'Py tutorial."
+    e "Hi3! My name is Eileen, and I'd like to welcome you to the Ren'Py tutorial."
+
+    jump data_breakpoint_demo
+
+    show countdown
 
     show eileen happy
 

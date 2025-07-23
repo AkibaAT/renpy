@@ -79,31 +79,44 @@ def reload_script():
     if renpy.store._in_replay:
         return
 
-    s = renpy.exports.get_screen("menu")
+    # Temporarily disable debugging during reload to prevent interference
+    restore_debug = False
+    if hasattr(renpy, 'debugger') and renpy.debugger and renpy.debugger.enabled:
+        renpy.debugger.prepare_for_reload()
+        restore_debug = True
 
-    session = renpy.session
-    session["_reload"] = True
+    try:
+        s = renpy.exports.get_screen("menu")
 
-    # If one of these variables is already in session, we're recovering from
-    # a failed reload.
-    if ("_reload_screen" in session) or ("_main_menu_screen" in session):
-        utter_restart()
+        session = renpy.session
+        session["_reload"] = True
 
-    if not renpy.store.main_menu:
-        if s is not None:
-            session["_reload_screen"] = s.screen_name[0]
-            session["_reload_screen_args"] = s.scope.get("_args", ())
-            session["_reload_screen_kwargs"] = s.scope.get("_kwargs", {})
+        # If one of these variables is already in session, we're recovering from
+        # a failed reload.
+        if ("_reload_screen" in session) or ("_main_menu_screen" in session):
+            utter_restart()
 
-        renpy.game.call_in_new_context("_save_reload_game")
+        if not renpy.store.main_menu:
+            if s is not None:
+                session["_reload_screen"] = s.screen_name[0]
+                session["_reload_screen_args"] = s.scope.get("_args", ())
+                session["_reload_screen_kwargs"] = s.scope.get("_kwargs", {})
 
-    else:
-        if s is not None:
-            session["_main_menu_screen"] = s.screen_name[0]
-            session["_main_menu_screen_args"] = s.scope.get("_args", ())
-            session["_main_menu_screen_kwargs"] = s.scope.get("_kwargs", {})
+            renpy.game.call_in_new_context("_save_reload_game")
 
-        utter_restart()
+        else:
+            if s is not None:
+                session["_main_menu_screen"] = s.screen_name[0]
+                session["_main_menu_screen_args"] = s.scope.get("_args", ())
+                session["_main_menu_screen_kwargs"] = s.scope.get("_kwargs", {})
+
+            utter_restart()
+    
+    except Exception:
+        # If reload fails, restore debugger state
+        if restore_debug and hasattr(renpy, 'debugger') and renpy.debugger:
+            renpy.debugger.restore_after_reload()
+        raise
 
 
 def quit(relaunch=False, status=0, save=False):

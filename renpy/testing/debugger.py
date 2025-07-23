@@ -55,6 +55,11 @@ class RenpyDebugger(object):
         # Breakpoints: {filename: {line_number: breakpoint_info}}
         self.breakpoints = {}
         
+        # Data breakpoints: {variable_name: data_breakpoint_info}
+        self.data_breakpoints = {}
+        self.variable_snapshots = {}  # Track variable values
+        self.data_breakpoint_enabled = False
+        
         # Debug state
         self.enabled = False
         self.paused = False
@@ -81,9 +86,10 @@ class RenpyDebugger(object):
         self.source_mapping = {}  # Map .rpy files to virtual Python files
         self.virtual_files_dir = None
         
-        # PyCharm integration
-        self.pycharm_enabled = False
-        self.pycharm_port = None
+        # Reload state management
+        self.saved_state = None
+        self.is_reloading = False
+        
         
     def enable(self):
         """Enable the debugger."""
@@ -97,6 +103,7 @@ class RenpyDebugger(object):
         self.paused = False
         self.pause_event.set()
         self._unpatch_python_execution()
+        self.disable_python_debugging()
         print("Ren'Py debugger disabled")
         
     def enable_python_debugging(self):
@@ -115,6 +122,83 @@ class RenpyDebugger(object):
             self.original_trace = None
             print("Python debugging disabled")
     
+    def prepare_for_reload(self):
+        """Prepare debugger for script reload by saving state and cleaning up."""
+        if not self.enabled:
+            return
+            
+        self.is_reloading = True
+        
+        # Save current debugger state
+        self.saved_state = {
+            'breakpoints': self._deep_copy_breakpoints(),
+            'enabled': self.enabled,
+            'python_enabled': self.python_enabled,
+            'debugpy_enabled': self.debugpy_enabled,
+            'debugpy_port': self.debugpy_port,
+            'source_mapping': self.source_mapping.copy(),
+            'virtual_files_dir': self.virtual_files_dir
+        }
+        
+        # Clean up debugging hooks
+        self._handle_restart_cleanup()
+        print("Debugger prepared for script reload")
+    
+    def restore_after_reload(self):
+        """Restore debugger state after script reload."""
+        if not self.is_reloading or not self.saved_state:
+            return
+            
+        # Restore breakpoints and settings
+        self.breakpoints = self.saved_state.get('breakpoints', {})
+        self.source_mapping = self.saved_state.get('source_mapping', {})
+        self.virtual_files_dir = self.saved_state.get('virtual_files_dir', None)
+        
+        was_enabled = self.saved_state.get('enabled', False)
+        was_python_enabled = self.saved_state.get('python_enabled', False)
+        was_debugpy_enabled = self.saved_state.get('debugpy_enabled', False)
+        debugpy_port = self.saved_state.get('debugpy_port', None)
+        
+        # Validate and update source mappings
+        self._validate_source_mappings()
+        
+        # Re-enable if it was enabled before
+        if was_enabled:
+            self.enable()
+            if was_python_enabled:
+                self.enable_python_debugging()
+            if was_debugpy_enabled and debugpy_port:
+                self._restore_debugpy_connection(debugpy_port)
+        
+        # Clear reload state
+        self.saved_state = None
+        self.is_reloading = False
+        print("Debugger state restored after script reload")
+    
+    def _handle_restart_cleanup(self):
+        """Clean up debugging state before script reload."""
+        # Release any waiting threads
+        if self.paused:
+            self.paused = False
+            self.pause_event.set()
+        
+        # Unpatch Python execution
+        self._unpatch_python_execution()
+        
+        # Restore original trace function
+        if self.python_enabled and self.original_trace is not None:
+            sys.settrace(self.original_trace)
+        
+        # Clear current execution context
+        self.current_node = None
+        self.current_file = None
+        self.current_line = None
+        self.current_type = None
+        
+        # Reset state flags but keep configuration
+        self.enabled = False
+        self.python_enabled = False
+    
     def enable_vscode_debugging(self, port=5678, wait_for_client=False):
         """
         Enable VSCode debugging via debugpy with direct .rpy file support.
@@ -132,6 +216,13 @@ class RenpyDebugger(object):
             if self.debugpy_enabled:
                 print(f"debugpy already enabled on port {self.debugpy_port}")
                 return True
+            
+            # Patch os module for debugpy compatibility
+            import os
+            if not hasattr(os, '__file__'):
+                import sysconfig
+                stdlib_path = sysconfig.get_path('stdlib')
+                os.__file__ = os.path.join(stdlib_path, 'os.py')
                 
             # Start debugpy server
             debugpy.listen(("localhost", port))
@@ -175,71 +266,7 @@ class RenpyDebugger(object):
             except ImportError:
                 pass
     
-    def enable_pycharm_debugging(self, port=12345):
-        """
-        Enable PyCharm remote debugging.
-        
-        Args:
-            port (int): Port for PyCharm debugger (default: 12345)
-            
-        Returns:
-            bool: True if successful
-        """
-        try:
-            # Try simple pydevd first (our custom implementation)
-            try:
-                import pydevd_simple
-                settrace_func = pydevd_simple.settrace
-                print("📦 Using pydevd_simple (custom)")
-            except ImportError:
-                # Try pydevd_pycharm 
-                try:
-                    import pydevd_pycharm
-                    settrace_func = pydevd_pycharm.settrace
-                    print("📦 Using pydevd_pycharm")
-                except ImportError:
-                    # Fall back to core pydevd
-                    import pydevd
-                    settrace_func = pydevd.settrace
-                    print("📦 Using core pydevd")
-            
-            if self.pycharm_enabled:
-                print(f"PyCharm debugging already enabled on port {self.pycharm_port}")
-                return True
-            
-            print(f"🐛 Connecting to PyCharm debugger on 172.26.176.1:{port}")
-            print("Make sure PyCharm Debug Server is running and showing 'Waiting for process connection...'")
-            
-            # Use the connection method with WSL IP
-            settrace_func('172.26.176.1', port=port, stdoutToServer=False, stderrToServer=False, suspend=False)
-            
-            self.pycharm_enabled = True
-            self.pycharm_port = port
-            
-            print("✅ Connected to PyCharm debugger!")
-            print("Set breakpoints in .rpy files in PyCharm - they'll work automatically!")
-            
-            return True
-            
-        except ImportError:
-            print("❌ PyCharm remote debugging not available")
-            print("Make sure you've installed pydevd or pydevd-pycharm")
-            return False
-        except Exception as e:
-            print(f"❌ PyCharm debugging failed: {e}")
-            print("Make sure PyCharm remote debugging server is running")
-            return False
     
-    def disable_pycharm_debugging(self):
-        """Disable PyCharm debugging."""
-        if self.pycharm_enabled:
-            try:
-                # PyCharm debugging doesn't have a clean disconnect
-                self.pycharm_enabled = False
-                self.pycharm_port = None
-                print("PyCharm debugging disabled")
-            except Exception:
-                pass
     
     def _setup_direct_rpy_debugging(self):
         """Set up direct .rpy file debugging without virtual files."""
@@ -514,8 +541,6 @@ class RenpyDebugger(object):
         # Handle different IDE debugging
         if self.debugpy_enabled:
             self._handle_vscode_breakpoint(node)
-        elif self.pycharm_enabled:
-            self._handle_pycharm_breakpoint(node)
         elif self._should_break():
             self._pause_execution("Breakpoint")
     
@@ -603,49 +628,6 @@ class RenpyDebugger(object):
             
         return context
     
-    def _handle_pycharm_breakpoint(self, node):
-        """Handle breakpoint checking when PyCharm debugging is enabled."""
-        try:
-            import pydevd
-            
-            # Get the full path to the .rpy file
-            rpy_file_path = self._get_full_rpy_path(self.current_file)
-            
-            if rpy_file_path:
-                # Create debugging context
-                debug_context = self._create_debug_context()
-                
-                # This will trigger PyCharm breakpoints if set on this line
-                # PyCharm will see this as executing from the .rpy file
-                frame = sys._getframe()
-                
-                # Set the frame's filename to the .rpy file so PyCharm sees it correctly
-                if hasattr(frame, 'f_code'):
-                    # Create a new code object with the .rpy filename
-                    original_code = frame.f_code
-                    
-                    # PyCharm will see breakpoints set in the .rpy file
-                    pydevd.trace_dispatch(frame, 'line', None)
-                    
-            # Always check for manual breakpoints too
-            if self._should_break():
-                # Use PyCharm's breakpoint function if available
-                try:
-                    import pydevd
-                    pydevd.settrace(suspend=True)
-                except:
-                    # Fallback to our pause mechanism
-                    self._pause_execution("Breakpoint")
-                
-        except ImportError:
-            # Fallback to custom breakpoints
-            if self._should_break():
-                self._pause_execution("Breakpoint")
-        except Exception as e:
-            print(f"PyCharm debugging error: {e}")
-            # Fallback to custom breakpoints
-            if self._should_break():
-                self._pause_execution("Breakpoint")
     
     def _debug_execution_point(self, line_number, statement_type="script"):
         """
@@ -720,6 +702,556 @@ class RenpyDebugger(object):
             
         return variables
     
+    # ===== DATA BREAKPOINTS =====
+    
+    def add_data_breakpoint(self, variable_name, condition="change", access_type="write"):
+        """
+        Add a data breakpoint that triggers when a variable changes.
+        
+        Args:
+            variable_name (str): Name of variable to watch (e.g., "health", "persistent.score")
+            condition (str): Condition for breaking:
+                - "change": Break on any value change (default)
+                - "increase": Break when value increases
+                - "decrease": Break when value decreases
+                - "equals:VALUE": Break when value equals VALUE
+                - "gt:VALUE": Break when value greater than VALUE
+                - "lt:VALUE": Break when value less than VALUE
+            access_type (str): "read", "write", or "both" (currently only "write" supported)
+            
+        Returns:
+            int: Data breakpoint ID
+        """
+        if not self.enabled:
+            raise RuntimeError("Debugger must be enabled to add data breakpoints")
+        
+        bp_id = len(self.data_breakpoints) + 1
+        
+        self.data_breakpoints[variable_name] = {
+            'id': bp_id,
+            'variable_name': variable_name,
+            'condition': condition,
+            'access_type': access_type,
+            'enabled': True,
+            'hit_count': 0,
+            'last_value': None,
+            'created_at': time.time()
+        }
+        
+        # Take initial snapshot of the variable
+        current_value = self._get_variable_value(variable_name)
+        self.variable_snapshots[variable_name] = current_value
+        self.data_breakpoints[variable_name]['last_value'] = current_value
+        
+        # Enable data breakpoint monitoring
+        if not self.data_breakpoint_enabled:
+            self._enable_data_breakpoint_monitoring()
+        
+        # Verify debugpy status
+        if self.debugpy_enabled:
+            print(f"Data breakpoint {bp_id} added for '{variable_name}' (condition: {condition}) - debugpy active")
+        else:
+            print(f"Data breakpoint {bp_id} added for '{variable_name}' (condition: {condition}) - custom debugger mode")
+        print(f"Current value: {current_value}")
+        
+        return bp_id
+    
+    def remove_data_breakpoint(self, variable_name):
+        """Remove a data breakpoint by variable name."""
+        if variable_name in self.data_breakpoints:
+            bp_id = self.data_breakpoints[variable_name]['id']
+            del self.data_breakpoints[variable_name]
+            if variable_name in self.variable_snapshots:
+                del self.variable_snapshots[variable_name]
+            
+            # Disable monitoring if no data breakpoints remain
+            if not self.data_breakpoints:
+                self._disable_data_breakpoint_monitoring()
+            
+            print(f"Data breakpoint {bp_id} for '{variable_name}' removed")
+            return True
+        return False
+    
+    def list_data_breakpoints(self):
+        """List all active data breakpoints."""
+        if not self.data_breakpoints:
+            return []
+        
+        breakpoints = []
+        for var_name, bp_info in self.data_breakpoints.items():
+            current_value = self._get_variable_value(var_name)
+            breakpoints.append({
+                'id': bp_info['id'],
+                'variable_name': var_name,
+                'condition': bp_info['condition'],
+                'enabled': bp_info['enabled'],
+                'hit_count': bp_info['hit_count'],
+                'current_value': current_value,
+                'last_value': bp_info['last_value']
+            })
+        return breakpoints
+    
+    def _enable_data_breakpoint_monitoring(self):
+        """Enable variable change monitoring."""
+        self.data_breakpoint_enabled = True
+        
+        # Patch store access to monitor variable changes
+        self._patch_store_access()
+        
+        print("Data breakpoint monitoring enabled")
+    
+    def _disable_data_breakpoint_monitoring(self):
+        """Disable variable change monitoring."""
+        self.data_breakpoint_enabled = False
+        self._unpatch_store_access()
+        print("Data breakpoint monitoring disabled")
+    
+    def _patch_store_access(self):
+        """Patch renpy.store to monitor variable changes."""
+        if hasattr(self, '_original_store_setattr'):
+            return  # Already patched
+        
+        # Store original methods - StoreModule only has __setattr__
+        # Both $ variable = value and direct assignment use __setattr__
+        self._original_store_setattr = renpy.store.__class__.__setattr__
+        self._original_persistent_setattr = None
+        
+        if hasattr(renpy.game, 'persistent') and renpy.game.persistent:
+            self._original_persistent_setattr = renpy.game.persistent.__class__.__setattr__
+        
+        debugger_ref = self
+        
+
+        def patched_store_setattr(store_self, name, value):
+            """Patch for all store variable assignments ($ variable = value and direct)."""
+            # Call original setattr first
+            debugger_ref._original_store_setattr(store_self, name, value)
+
+            # Check for data breakpoints after setting the value
+            if debugger_ref.data_breakpoint_enabled and not name.startswith('_'):
+                should_break = debugger_ref._check_data_breakpoint_and_return_break_status(name, value)
+
+                # Trigger breakpoint if needed - this will break at the correct .rpy location
+                if should_break:
+                    print(f"🔍 Data breakpoint triggered: {name} = {value}")
+                    old_value = debugger_ref.variable_snapshots.get(name)
+                    debugger_ref._trigger_data_breakpoint_at_source_location(name, old_value, value)
+        
+        def patched_persistent_setattr(persistent_self, name, value):
+            """Patch for persistent variable changes."""
+            # Call original setattr first
+            debugger_ref._original_persistent_setattr(persistent_self, name, value)
+
+            # Check for data breakpoints after setting the value
+            if debugger_ref.data_breakpoint_enabled and not name.startswith('_'):
+                should_break = debugger_ref._check_data_breakpoint_and_return_break_status(f"persistent.{name}", value)
+
+                # Trigger breakpoint if needed - this will break at the correct .rpy location
+                if should_break:
+                    print(f"🔍 Data breakpoint triggered: persistent.{name} = {value}")
+                    old_value = debugger_ref.variable_snapshots.get(f"persistent.{name}")
+                    debugger_ref._trigger_data_breakpoint_at_source_location(f"persistent.{name}", old_value, value)
+        
+        # Apply patches
+        renpy.store.__class__.__setattr__ = patched_store_setattr
+
+        if self._original_persistent_setattr:
+            renpy.game.persistent.__class__.__setattr__ = patched_persistent_setattr
+
+        print(f"Store patching applied: __setattr__ patched")
+    
+    def _unpatch_store_access(self):
+        """Restore original store access methods."""
+            
+        if hasattr(self, '_original_store_setattr'):
+            renpy.store.__class__.__setattr__ = self._original_store_setattr
+            del self._original_store_setattr
+        
+        if hasattr(self, '_original_persistent_setattr') and self._original_persistent_setattr:
+            renpy.game.persistent.__class__.__setattr__ = self._original_persistent_setattr
+            del self._original_persistent_setattr
+        
+        print("Store patching removed")
+    
+    def _get_variable_value(self, variable_name):
+        """Get the current value of a variable."""
+        try:
+            if variable_name.startswith('persistent.'):
+                var_name = variable_name[11:]  # Remove 'persistent.' prefix
+                if hasattr(renpy.game, 'persistent'):
+                    return getattr(renpy.game.persistent, var_name, None)
+            else:
+                return getattr(renpy.store, variable_name, None)
+        except Exception:
+            return None
+    
+    def _check_data_breakpoint(self, variable_name, new_value):
+        """Check if a variable change should trigger a data breakpoint."""
+        # Check direct variable name
+        self._check_single_data_breakpoint(variable_name, new_value)
+        
+        # Also check persistent.variable_name format
+        if not variable_name.startswith('persistent.'):
+            persistent_name = f"persistent.{variable_name}"
+            if persistent_name in self.data_breakpoints:
+                self._check_single_data_breakpoint(persistent_name, new_value)
+    
+    def _check_single_data_breakpoint(self, variable_name, new_value):
+        """Check a single data breakpoint for triggering."""
+        if variable_name not in self.data_breakpoints:
+            return
+        
+        bp_info = self.data_breakpoints[variable_name]
+        if not bp_info['enabled']:
+            return
+        
+        old_value = bp_info['last_value']
+        condition = bp_info['condition']
+        
+        should_break = False
+        break_reason = ""
+        
+        try:
+            # Check condition
+            if condition == "change":
+                should_break = (old_value != new_value)
+                break_reason = f"Variable '{variable_name}' changed: {old_value} → {new_value}"
+            
+            elif condition == "increase":
+                if old_value is not None and new_value is not None:
+                    try:
+                        should_break = (float(new_value) > float(old_value))
+                        break_reason = f"Variable '{variable_name}' increased: {old_value} → {new_value}"
+                    except (ValueError, TypeError):
+                        pass
+            
+            elif condition == "decrease":
+                if old_value is not None and new_value is not None:
+                    try:
+                        should_break = (float(new_value) < float(old_value))
+                        break_reason = f"Variable '{variable_name}' decreased: {old_value} → {new_value}"
+                    except (ValueError, TypeError):
+                        pass
+            
+            elif condition.startswith("equals:"):
+                target_value = condition[7:]  # Remove 'equals:' prefix
+                should_break = (str(new_value) == target_value)
+                break_reason = f"Variable '{variable_name}' equals {target_value}: {new_value}"
+            
+            elif condition.startswith("gt:"):
+                target_value = condition[3:]  # Remove 'gt:' prefix
+                try:
+                    should_break = (float(new_value) > float(target_value))
+                    break_reason = f"Variable '{variable_name}' > {target_value}: {new_value}"
+                except (ValueError, TypeError):
+                    pass
+            
+            elif condition.startswith("lt:"):
+                target_value = condition[3:]  # Remove 'lt:' prefix
+                try:
+                    should_break = (float(new_value) < float(target_value))
+                    break_reason = f"Variable '{variable_name}' < {target_value}: {new_value}"
+                except (ValueError, TypeError):
+                    pass
+            
+            if should_break:
+                # Update hit count and last value
+                bp_info['hit_count'] += 1
+                bp_info['last_value'] = new_value
+                self.variable_snapshots[variable_name] = new_value
+                
+                # Breakpoint is now triggered directly in the patched __setattr__ methods
+                # This just updates the hit count and logs the event
+                print(f"\n🔴 DATA BREAKPOINT HIT: {break_reason}")
+                print(f"   Variable: {variable_name}")
+                print(f"   Old value: {old_value}")
+                print(f"   New value: {new_value}")
+            else:
+                # Update last value even if not breaking
+                bp_info['last_value'] = new_value
+                self.variable_snapshots[variable_name] = new_value
+                
+        except Exception as e:
+            print(f"Error checking data breakpoint for '{variable_name}': {e}")
+
+    def _check_data_breakpoint_and_return_break_status(self, variable_name, new_value):
+        """
+        Check data breakpoints for a variable and return True if a breakpoint should trigger.
+        This is similar to _check_data_breakpoint but returns the break status instead of triggering.
+        """
+        try:
+            if variable_name not in self.data_breakpoints:
+                return False
+
+            bp_info = self.data_breakpoints[variable_name]
+            condition = bp_info['condition']
+
+            # Get old value from snapshot or current value
+            old_value = self.variable_snapshots.get(variable_name)
+            if old_value is None:
+                # Try to get current value from store
+                if variable_name.startswith('persistent.'):
+                    actual_var = variable_name[11:]  # Remove 'persistent.' prefix
+                    if hasattr(renpy.game, 'persistent'):
+                        old_value = getattr(renpy.game.persistent, actual_var, None)
+                else:
+                    old_value = getattr(renpy.store, variable_name, None)
+
+            # Check if breakpoint condition is met
+            should_break = False
+            break_reason = ""
+
+            if condition == "change":
+                should_break = old_value != new_value
+                break_reason = f"{variable_name} changed from {old_value} to {new_value}"
+            elif condition == "increase":
+                should_break = (old_value is not None and new_value is not None and
+                               new_value > old_value)
+                break_reason = f"{variable_name} increased from {old_value} to {new_value}"
+            elif condition == "decrease":
+                should_break = (old_value is not None and new_value is not None and
+                               new_value < old_value)
+                break_reason = f"{variable_name} decreased from {old_value} to {new_value}"
+            elif condition.startswith("equals:"):
+                target_value = condition[7:]  # Remove "equals:" prefix
+                try:
+                    if isinstance(new_value, (int, float)):
+                        target_value = type(new_value)(target_value)
+                    should_break = new_value == target_value
+                    break_reason = f"{variable_name} equals {target_value}"
+                except (ValueError, TypeError):
+                    should_break = str(new_value) == target_value
+                    break_reason = f"{variable_name} equals '{target_value}'"
+            elif condition.startswith("gt:"):
+                target_value = condition[3:]  # Remove "gt:" prefix
+                try:
+                    if isinstance(new_value, (int, float)):
+                        target_value = type(new_value)(target_value)
+                        should_break = new_value > target_value
+                        break_reason = f"{variable_name} > {target_value} (value: {new_value})"
+                except (ValueError, TypeError):
+                    pass
+            elif condition.startswith("lt:"):
+                target_value = condition[3:]  # Remove "lt:" prefix
+                try:
+                    if isinstance(new_value, (int, float)):
+                        target_value = type(new_value)(target_value)
+                        should_break = new_value < target_value
+                        break_reason = f"{variable_name} < {target_value} (value: {new_value})"
+                except (ValueError, TypeError):
+                    pass
+
+            if should_break:
+                # Update hit count and last value
+                bp_info['hit_count'] += 1
+                bp_info['last_value'] = new_value
+                self.variable_snapshots[variable_name] = new_value
+
+                # Log the breakpoint hit
+                print(f"\n🔴 DATA BREAKPOINT HIT: {break_reason}")
+                print(f"   Variable: {variable_name}")
+                print(f"   Old value: {old_value}")
+                print(f"   New value: {new_value}")
+
+                return True
+            else:
+                # Update last value even if not breaking
+                bp_info['last_value'] = new_value
+                self.variable_snapshots[variable_name] = new_value
+                return False
+
+        except Exception as e:
+            print(f"Error checking data breakpoint for '{variable_name}': {e}")
+            return False
+
+    def _should_trigger_data_breakpoint(self, variable_name, old_value, new_value):
+        """
+        Check if a data breakpoint should trigger for the given variable change.
+        Returns True if a breakpoint should trigger, False otherwise.
+        """
+        if variable_name not in self.data_breakpoints:
+            return False
+
+        bp_info = self.data_breakpoints[variable_name]
+        condition = bp_info['condition']
+
+        try:
+            if condition == "change":
+                return old_value != new_value
+            elif condition == "increase":
+                return (old_value is not None and new_value is not None and
+                       new_value > old_value)
+            elif condition == "decrease":
+                return (old_value is not None and new_value is not None and
+                       new_value < old_value)
+            elif condition.startswith("equals:"):
+                target_value = condition[7:]  # Remove "equals:" prefix
+                try:
+                    # Try to convert to the same type as new_value
+                    if isinstance(new_value, (int, float)):
+                        target_value = type(new_value)(target_value)
+                    return new_value == target_value
+                except (ValueError, TypeError):
+                    return str(new_value) == target_value
+            elif condition.startswith("gt:"):
+                target_value = condition[3:]  # Remove "gt:" prefix
+                try:
+                    if isinstance(new_value, (int, float)):
+                        target_value = type(new_value)(target_value)
+                        return new_value > target_value
+                except (ValueError, TypeError):
+                    pass
+                return False
+            elif condition.startswith("lt:"):
+                target_value = condition[3:]  # Remove "lt:" prefix
+                try:
+                    if isinstance(new_value, (int, float)):
+                        target_value = type(new_value)(target_value)
+                        return new_value < target_value
+                except (ValueError, TypeError):
+                    pass
+                return False
+            else:
+                # Unknown condition
+                return False
+
+        except Exception as e:
+            print(f"Error evaluating data breakpoint condition '{condition}': {e}")
+            return False
+
+    def _trigger_data_breakpoint_at_source_location(self, variable_name, old_value, new_value):
+        """
+        Trigger a data breakpoint at the actual source location where the variable was changed.
+        Uses the same approach as regular breakpoints to map to the correct .rpy file and line.
+        """
+        if not self.debugpy_enabled:
+            print("❌ debugpy not enabled, cannot trigger VSCode breakpoint")
+            return
+
+        try:
+            import debugpy
+            import inspect
+
+            # Find the .rpy file and line where the variable assignment happened
+            rpy_file, line_number = self._find_source_location_for_data_breakpoint()
+
+            if rpy_file and line_number:
+                print(f"🔍 Data breakpoint source: {rpy_file}:{line_number}")
+
+                # Get full path to .rpy file
+                rpy_file_path = self._get_full_rpy_path(rpy_file)
+
+                if rpy_file_path:
+                    # Provide rich debugging context and trigger breakpoint
+                    try:
+                        import sys
+
+                        # Store comprehensive debugging context
+                        debug_context = {
+                            'variable_name': variable_name,
+                            'old_value': old_value,
+                            'new_value': new_value,
+                            'source_file': rpy_file_path,
+                            'source_line': line_number,
+                            'breakpoint_type': 'data_breakpoint',
+                            'rpy_file': rpy_file
+                        }
+
+                        # Make context available globally for debugger access
+                        if not hasattr(sys, '_renpy_data_breakpoint_context'):
+                            sys._renpy_data_breakpoint_context = {}
+                        sys._renpy_data_breakpoint_context.update(debug_context)
+
+                        # Add context to current frame locals for immediate access
+                        frame = sys._getframe()
+                        if frame and hasattr(frame, 'f_locals'):
+                            # Add the changed variable
+                            frame.f_locals[variable_name] = new_value
+                            # Add debugging context
+                            frame.f_locals['data_breakpoint_info'] = debug_context
+                            frame.f_locals['rpy_file'] = rpy_file_path
+                            frame.f_locals['rpy_line'] = line_number
+
+                        # Print clear debugging information
+                        print(f"\n{'='*60}")
+                        print(f"🔍 DATA BREAKPOINT HIT")
+                        print(f"📁 File: {rpy_file_path}")
+                        print(f"📍 Line: {line_number}")
+                        print(f"🔄 Variable: {variable_name}")
+                        print(f"📊 Change: {old_value} → {new_value}")
+                        print(f"{'='*60}")
+                        print(f"💡 In the debugger, you can:")
+                        print(f"   • Inspect '{variable_name}' (current value: {new_value})")
+                        print(f"   • Check 'data_breakpoint_info' for full context")
+                        print(f"   • Use 'rpy_file' and 'rpy_line' for source location")
+                        print(f"{'='*60}\n")
+
+                        # Trigger the debugger breakpoint
+                        import debugpy
+                        debugpy.breakpoint()
+
+                    except Exception as compile_error:
+                        print(f"Error creating data breakpoint context: {compile_error}")
+                        # Fallback to simple breakpoint - but don't call it here to avoid wrong location
+                        print("❌ Could not create proper breakpoint context")
+                else:
+                    print(f"Could not find full path for {rpy_file}")
+                    print("❌ Could not map to .rpy file for breakpoint")
+            else:
+                print("Could not determine source location for data breakpoint")
+                print("❌ Could not find source location for breakpoint")
+
+        except ImportError:
+            print("❌ debugpy not available")
+        except Exception as e:
+            print(f"Error triggering data breakpoint: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _find_source_location_for_data_breakpoint(self):
+        """
+        Find the .rpy file and line number where a variable assignment happened.
+        Returns (filename, line_number) or (None, None) if not found.
+        """
+        try:
+            import inspect
+
+            # Walk up the stack to find the .rpy file
+            current_frame = inspect.currentframe()
+            try:
+                frame = current_frame
+                while frame:
+                    frame = frame.f_back
+                    if frame is None:
+                        break
+
+                    filename = frame.f_code.co_filename
+
+                    # Skip debugger and internal Ren'Py frames
+                    if ('debugger.py' in filename or
+                        'python.py' in filename or
+                        '__pycache__' in filename):
+                        continue
+
+                    # Look for .rpy files
+                    if filename.endswith('.rpy'):
+                        return os.path.basename(filename), frame.f_lineno
+
+                    # Also check for Ren'Py script execution frames
+                    if ('ast.py' in filename or 'script.py' in filename):
+                        # Try to get the current .rpy context
+                        if hasattr(self, 'current_file') and hasattr(self, 'current_line'):
+                            if self.current_file and self.current_line:
+                                return self.current_file, self.current_line
+
+            finally:
+                del current_frame  # Prevent reference cycles
+
+        except Exception as e:
+            print(f"Error finding source location: {e}")
+
+        return None, None
+
     def get_call_stack(self):
         """Get current call stack."""
         stack = []
@@ -814,6 +1346,18 @@ class RenpyDebugger(object):
         self.original_py_exec = renpy.python.py_exec_bytecode
         
         def patched_py_exec_bytecode(bytecode, hide=False, globals=None, locals=None, store="store"):
+            # Capture variable state before execution for data breakpoints
+            pre_execution_vars = {}
+            if self.data_breakpoint_enabled:
+                # Capture current values of watched variables
+                for var_name in self.data_breakpoints.keys():
+                    if var_name.startswith('persistent.'):
+                        actual_var = var_name[11:]  # Remove 'persistent.' prefix
+                        if hasattr(renpy.game, 'persistent'):
+                            pre_execution_vars[var_name] = getattr(renpy.game.persistent, actual_var, None)
+                    else:
+                        pre_execution_vars[var_name] = getattr(renpy.store, var_name, None)
+            
             # Check for breakpoints in Python code
             if self.enabled and self.python_enabled:
                 # Try to extract source info from bytecode
@@ -827,7 +1371,33 @@ class RenpyDebugger(object):
                         self._pause_execution("Breakpoint")
             
             # Call original function
-            return self.original_py_exec(bytecode, hide, globals, locals, store)
+            result = self.original_py_exec(bytecode, hide, globals, locals, store)
+            
+            # Check for data breakpoints after execution
+            if self.data_breakpoint_enabled:
+                # Check if any watched variables changed
+                for var_name in self.data_breakpoints.keys():
+                    old_value = pre_execution_vars.get(var_name)
+                    if var_name.startswith('persistent.'):
+                        actual_var = var_name[11:]  # Remove 'persistent.' prefix
+                        if hasattr(renpy.game, 'persistent'):
+                            new_value = getattr(renpy.game.persistent, actual_var, None)
+                        else:
+                            new_value = None
+                    else:
+                        new_value = getattr(renpy.store, var_name, None)
+                    
+                    # Check if value changed
+                    if old_value != new_value:
+                        print(f"🔍 Python execution changed {var_name}: {old_value} → {new_value}")
+                        should_break = self._check_data_breakpoint_and_return_break_status(var_name, new_value)
+
+                        # Trigger breakpoint if needed - this will break at the correct .rpy location
+                        if should_break:
+                            print(f"🔍 Data breakpoint triggered in Python execution: {var_name} = {new_value}")
+                            self._trigger_data_breakpoint_at_source_location(var_name, old_value, new_value)
+            
+            return result
         
         renpy.python.py_exec_bytecode = patched_py_exec_bytecode
     
@@ -897,6 +1467,72 @@ class RenpyDebugger(object):
             pass
             
         return None
+    
+    def _deep_copy_breakpoints(self):
+        """Create a deep copy of breakpoints for state preservation."""
+        copy = {}
+        for filename, line_map in self.breakpoints.items():
+            copy[filename] = {}
+            for line, bp_info in line_map.items():
+                copy[filename][line] = {
+                    'enabled': bp_info['enabled'],
+                    'condition': bp_info['condition'],
+                    'hit_count': bp_info['hit_count']
+                }
+        return copy
+    
+    def _restore_debugpy_connection(self, port):
+        """Attempt to restore debugpy connection after reload."""
+        try:
+            # Don't restart if already connected
+            if self.debugpy_enabled:
+                return
+                
+            self.enable_vscode_debugging(port, wait_for_client=False)
+            print(f"Debugpy connection restored on port {port}")
+        except Exception as e:
+            print(f"Failed to restore debugpy connection: {e}")
+    
+    def _validate_source_mappings(self):
+        """Validate and update source mappings after script reload."""
+        if not self.source_mapping:
+            return
+            
+        # Check if mapped files still exist and update if necessary
+        invalid_mappings = []
+        for rpy_file, virtual_file in self.source_mapping.items():
+            if not os.path.exists(rpy_file):
+                invalid_mappings.append(rpy_file)
+                continue
+                
+            # Update virtual file content if rpy file changed
+            if os.path.exists(virtual_file):
+                try:
+                    rpy_mtime = os.path.getmtime(rpy_file)
+                    virtual_mtime = os.path.getmtime(virtual_file)
+                    if rpy_mtime > virtual_mtime:
+                        self._update_virtual_file_content(rpy_file, virtual_file)
+                except Exception as e:
+                    print(f"Error updating virtual file {virtual_file}: {e}")
+        
+        # Remove invalid mappings
+        for rpy_file in invalid_mappings:
+            del self.source_mapping[rpy_file]
+    
+    def _update_virtual_file_content(self, rpy_file, virtual_file):
+        """Update virtual file content to match rpy file after reload."""
+        try:
+            with open(rpy_file, 'r', encoding='utf-8') as f:
+                rpy_content = f.read()
+            
+            # Convert rpy content to debuggable Python
+            python_content = self._convert_rpy_to_debuggable_python(rpy_content)
+            
+            with open(virtual_file, 'w', encoding='utf-8') as f:
+                f.write(python_content)
+                
+        except Exception as e:
+            print(f"Failed to update virtual file {virtual_file}: {e}")
 
 
 # Global debugger instance
@@ -987,14 +1623,108 @@ def create_virtual_file(rpy_filename):
     """Create virtual Python file for a .rpy file."""
     return get_debugger()._create_virtual_python_file(rpy_filename)
 
-def enable_pycharm_debugging(port=12345):
-    """Enable PyCharm debugging."""
-    return get_debugger().enable_pycharm_debugging(port)
+# ===== DATA BREAKPOINT API =====
 
-def disable_pycharm_debugging():
-    """Disable PyCharm debugging."""
-    get_debugger().disable_pycharm_debugging()
+def add_data_breakpoint(variable_name, condition="change", access_type="write"):
+    """
+    Add a data breakpoint that triggers when a variable changes.
+    
+    Args:
+        variable_name (str): Name of variable to watch (e.g., "health", "persistent.score")
+        condition (str): Condition for breaking:
+            - "change": Break on any value change (default)
+            - "increase": Break when value increases
+            - "decrease": Break when value decreases  
+            - "equals:VALUE": Break when value equals VALUE
+            - "gt:VALUE": Break when value greater than VALUE
+            - "lt:VALUE": Break when value less than VALUE
+        access_type (str): "read", "write", or "both" (currently only "write" supported)
+        
+    Returns:
+        int: Data breakpoint ID
+        
+    Example:
+        # Break when health changes
+        add_data_breakpoint("health")
+        
+        # Break when score increases
+        add_data_breakpoint("persistent.score", "increase")
+        
+        # Break when money reaches exactly 1000
+        add_data_breakpoint("money", "equals:1000")
+    """
+    return get_debugger().add_data_breakpoint(variable_name, condition, access_type)
 
-def is_pycharm_debugging_enabled():
-    """Check if PyCharm debugging is enabled."""
-    return get_debugger().pycharm_enabled
+def remove_data_breakpoint(variable_name):
+    """Remove a data breakpoint by variable name."""
+    return get_debugger().remove_data_breakpoint(variable_name)
+
+def list_data_breakpoints():
+    """List all active data breakpoints with their current status."""
+    return get_debugger().list_data_breakpoints()
+
+def clear_all_data_breakpoints():
+    """Remove all data breakpoints."""
+    debugger = get_debugger()
+    removed_count = 0
+    for var_name in list(debugger.data_breakpoints.keys()):
+        if debugger.remove_data_breakpoint(var_name):
+            removed_count += 1
+    print(f"Removed {removed_count} data breakpoints")
+    return removed_count
+
+def test_debugpy_connection():
+    """Test if debugpy is properly connected and can trigger breakpoints."""
+    debugger = get_debugger()
+    if not debugger.debugpy_enabled:
+        print("❌ debugpy is not enabled. Enable with:")
+        print("   dbg.enable_vscode_debugging(5678)")
+        return False
+    
+    try:
+        import debugpy
+        print("✅ debugpy is available and enabled")
+        print(f"   Port: {debugger.debugpy_port}")
+        
+        # Test if we can trigger a simple breakpoint
+        response = input("Test debugpy breakpoint now? (y/n): ")
+        if response.lower() == 'y':
+            print("🔴 Triggering test breakpoint - VSCode should pause now...")
+            debugpy.breakpoint()
+            print("✅ Test breakpoint completed")
+        
+        return True
+    except ImportError:
+        print("❌ debugpy is not available. Install with: pip install debugpy")
+        return False
+    except Exception as e:
+        print(f"❌ debugpy error: {e}")
+        return False
+
+def test_variable_patching():
+    """Test if variable change detection is working."""
+    debugger = get_debugger()
+    
+    print("\n=== Testing Variable Change Detection ===")
+    print(f"Debugger enabled: {debugger.enabled}")
+    print(f"Data breakpoint monitoring: {debugger.data_breakpoint_enabled}")
+    print(f"Store patching active: {hasattr(debugger, '_original_store_setattr')}")
+    
+    # Test direct store assignment
+    print("\nTesting direct store assignment...")
+    try:
+        renpy.store.test_direct = 999
+        print("Direct assignment completed")
+    except Exception as e:
+        print(f"Direct assignment failed: {e}")
+    
+    # Test dictionary assignment (this is what $ variable = value uses)
+    print("\nTesting dictionary assignment...")
+    try:
+        renpy.store['test_dict'] = 888
+        print("Dictionary assignment completed")
+    except Exception as e:
+        print(f"Dictionary assignment failed: {e}")
+    
+    return True
+
