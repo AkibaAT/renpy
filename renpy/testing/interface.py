@@ -617,6 +617,112 @@ class TestingInterface(object):
         except ImportError:
             raise RuntimeError("debugpy integration not available")
     
+    # ===== DATA BREAKPOINTS =====
+    
+    def add_data_breakpoint(self, variable_name, condition="change", access_type="write"):
+        """
+        Add a data breakpoint that triggers when a variable changes.
+        
+        Args:
+            variable_name (str): Name of variable to watch (e.g., "health", "persistent.score")
+            condition (str): Condition for breaking:
+                - "change": Break on any value change (default)
+                - "increase": Break when value increases
+                - "decrease": Break when value decreases
+                - "equals:VALUE": Break when value equals VALUE
+                - "gt:VALUE": Break when value greater than VALUE
+                - "lt:VALUE": Break when value less than VALUE
+            access_type (str): "read", "write", or "both" (currently only "write" supported)
+            
+        Returns:
+            dict: Data breakpoint information including ID
+            
+        Example:
+            # Break when health changes
+            api.add_data_breakpoint("health")
+            
+            # Break when score increases
+            api.add_data_breakpoint("persistent.score", "increase")
+            
+            # Break when money reaches exactly 1000
+            api.add_data_breakpoint("money", "equals:1000")
+        """
+        if not self._enabled:
+            raise RuntimeError("Testing interface is disabled")
+        try:
+            from renpy.testing.debugger import add_data_breakpoint
+            bp_id = add_data_breakpoint(variable_name, condition, access_type)
+            return {
+                'success': True,
+                'breakpoint_id': bp_id,
+                'variable_name': variable_name,
+                'condition': condition,
+                'access_type': access_type
+            }
+        except Exception as e:
+            raise RuntimeError(f"Failed to add data breakpoint: {e}")
+    
+    def remove_data_breakpoint(self, variable_name):
+        """
+        Remove a data breakpoint by variable name.
+        
+        Args:
+            variable_name (str): Name of variable to stop watching
+            
+        Returns:
+            dict: Success status
+        """
+        if not self._enabled:
+            raise RuntimeError("Testing interface is disabled")
+        try:
+            from renpy.testing.debugger import remove_data_breakpoint
+            success = remove_data_breakpoint(variable_name)
+            return {
+                'success': success,
+                'variable_name': variable_name
+            }
+        except Exception as e:
+            raise RuntimeError(f"Failed to remove data breakpoint: {e}")
+    
+    def list_data_breakpoints(self):
+        """
+        List all active data breakpoints.
+        
+        Returns:
+            dict: List of all data breakpoints with their status
+        """
+        if not self._enabled:
+            raise RuntimeError("Testing interface is disabled")
+        try:
+            from renpy.testing.debugger import list_data_breakpoints
+            breakpoints = list_data_breakpoints()
+            return {
+                'success': True,
+                'breakpoints': breakpoints,
+                'count': len(breakpoints)
+            }
+        except Exception as e:
+            raise RuntimeError(f"Failed to list data breakpoints: {e}")
+    
+    def clear_all_data_breakpoints(self):
+        """
+        Remove all data breakpoints.
+        
+        Returns:
+            dict: Number of breakpoints removed
+        """
+        if not self._enabled:
+            raise RuntimeError("Testing interface is disabled")
+        try:
+            from renpy.testing.debugger import clear_all_data_breakpoints
+            removed_count = clear_all_data_breakpoints()
+            return {
+                'success': True,
+                'removed_count': removed_count
+            }
+        except Exception as e:
+            raise RuntimeError(f"Failed to clear data breakpoints: {e}")
+    
     def start_pdb_debugging(self):
         """Start pdb debugging session."""
         if not self._enabled:
