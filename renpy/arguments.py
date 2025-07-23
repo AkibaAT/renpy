@@ -193,6 +193,15 @@ class ArgumentParser(argparse.ArgumentParser):
             '--port', dest='port', type=int, default=8080,
             help="The port number for the HTTP API server (default: 8080).")
 
+        # Debug Adapter Protocol arguments
+        self.add_argument(
+            '--dap', dest='dap', action='store_true', default=False,
+            help="Enable Debug Adapter Protocol for VSCode debugging.")
+
+        self.add_argument(
+            '--debug-port', dest='debug_port', type=int, default=5678,
+            help="The port number for the debug server (default: 5678).")
+
         if second_pass:
             self.add_argument("-h", "--help", action="help", help="Displays this help message, then exits.")
 
