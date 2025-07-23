@@ -59,6 +59,7 @@ class RenpyDebugger(object):
         self.data_breakpoints = {}
         self.variable_snapshots = {}  # Track variable values
         self.data_breakpoint_enabled = False
+        self.pending_data_breakpoint = None  # Stores info about triggered data breakpoint
         
         # Debug state
         self.enabled = False
@@ -101,6 +102,7 @@ class RenpyDebugger(object):
         """Disable the debugger."""
         self.enabled = False
         self.paused = False
+        self.pending_data_breakpoint = None  # Clear any pending data breakpoints
         self.pause_event.set()
         self._unpatch_python_execution()
         self.disable_python_debugging()
@@ -194,6 +196,7 @@ class RenpyDebugger(object):
         self.current_file = None
         self.current_line = None
         self.current_type = None
+        self.pending_data_breakpoint = None  # Clear any pending data breakpoints
         
         # Reset state flags but keep configuration
         self.enabled = False
@@ -538,6 +541,10 @@ class RenpyDebugger(object):
         self.current_line = node.linenumber
         self.current_type = 'script'
         
+        # Debug output for pending data breakpoints
+        if self.pending_data_breakpoint:
+            print(f"🔍 Processing pending data breakpoint at {self.current_file}:{self.current_line}")
+        
         # Handle different IDE debugging
         if self.debugpy_enabled:
             self._handle_vscode_breakpoint(node)
@@ -549,34 +556,39 @@ class RenpyDebugger(object):
         try:
             import debugpy
             
-            # Create a fake frame that appears to be from the .rpy file
-            # This allows VSCode to see breakpoints in .rpy files directly
-            rpy_file_path = self._get_full_rpy_path(self.current_file)
+            # Check if we should break (including pending data breakpoints)
+            should_break = self._should_break()
             
-            if rpy_file_path:
-                # Create code object that appears to be from the .rpy file
-                code_str = f"# Ren'Py execution point\npass  # Line {self.current_line}: {type(node).__name__}"
+            if should_break:
+                # Get the .rpy file path
+                rpy_file_path = self._get_full_rpy_path(self.current_file)
                 
-                try:
-                    # Compile with the .rpy filename so debugger sees it correctly
-                    code = compile(code_str, rpy_file_path, 'exec', dont_inherit=True)
+                if rpy_file_path:
+                    # If it's a data breakpoint, handle it specially
+                    if self.pending_data_breakpoint:
+                        self._handle_data_breakpoint_pause()
+                        return
                     
-                    # Execute this code - debugpy will see it as executing from the .rpy file
-                    # If there's a breakpoint on this line in VSCode, it will trigger
-                    exec(code, {
-                        '__file__': rpy_file_path,
-                        '__name__': f"renpy_{self.current_file}",
-                        'renpy_node': node,
-                        'renpy_context': self._create_debug_context()
-                    })
+                    # Create code object that appears to be from the .rpy file
+                    code_str = f"# Ren'Py execution point\npass  # Line {self.current_line}: {type(node).__name__}"
                     
-                except Exception as compile_error:
-                    # If compilation fails, fall back to debugpy.breakpoint()
-                    if self._should_break():
+                    try:
+                        # Compile with the .rpy filename so debugger sees it correctly
+                        code = compile(code_str, rpy_file_path, 'exec', dont_inherit=True)
+                        
+                        # Execute this code - debugpy will see it as executing from the .rpy file
+                        exec(code, {
+                            '__file__': rpy_file_path,
+                            '__name__': f"renpy_{self.current_file}",
+                            'renpy_node': node,
+                            'renpy_context': self._create_debug_context()
+                        })
+                        
+                    except Exception as compile_error:
+                        # If compilation fails, fall back to debugpy.breakpoint()
                         debugpy.breakpoint()
-            else:
-                # Fallback to programmatic breakpoint
-                if self._should_break():
+                else:
+                    # Fallback to programmatic breakpoint
                     debugpy.breakpoint()
                 
         except ImportError:
@@ -835,7 +847,7 @@ class RenpyDebugger(object):
                 if should_break:
                     print(f"🔍 Data breakpoint triggered: {name} = {value}")
                     old_value = debugger_ref.variable_snapshots.get(name)
-                    debugger_ref._trigger_data_breakpoint_at_source_location(name, old_value, value)
+                    debugger_ref._trigger_data_breakpoint_here(name, old_value, value)
         
         def patched_persistent_setattr(persistent_self, name, value):
             """Patch for persistent variable changes."""
@@ -850,7 +862,7 @@ class RenpyDebugger(object):
                 if should_break:
                     print(f"🔍 Data breakpoint triggered: persistent.{name} = {value}")
                     old_value = debugger_ref.variable_snapshots.get(f"persistent.{name}")
-                    debugger_ref._trigger_data_breakpoint_at_source_location(f"persistent.{name}", old_value, value)
+                    debugger_ref._trigger_data_breakpoint_here(f"persistent.{name}", old_value, value)
         
         # Apply patches
         renpy.store.__class__.__setattr__ = patched_store_setattr
@@ -1002,42 +1014,65 @@ class RenpyDebugger(object):
             break_reason = ""
 
             if condition == "change":
-                should_break = old_value != new_value
-                break_reason = f"{variable_name} changed from {old_value} to {new_value}"
+                # For change conditions, we need to compare against the actual last observed value
+                # not just the old_value from this call
+                actual_last_value = self.variable_snapshots.get(variable_name)
+                should_break = actual_last_value != new_value
+                break_reason = f"{variable_name} changed from {actual_last_value} to {new_value}"
             elif condition == "increase":
-                should_break = (old_value is not None and new_value is not None and
-                               new_value > old_value)
-                break_reason = f"{variable_name} increased from {old_value} to {new_value}"
+                # For increase conditions, compare against the last observed value
+                actual_last_value = self.variable_snapshots.get(variable_name)
+                should_break = (actual_last_value is not None and new_value is not None and
+                               isinstance(actual_last_value, (int, float)) and isinstance(new_value, (int, float)) and
+                               new_value > actual_last_value)
+                break_reason = f"{variable_name} increased from {actual_last_value} to {new_value}"
             elif condition == "decrease":
-                should_break = (old_value is not None and new_value is not None and
-                               new_value < old_value)
-                break_reason = f"{variable_name} decreased from {old_value} to {new_value}"
+                # For decrease conditions, compare against the last observed value
+                actual_last_value = self.variable_snapshots.get(variable_name)
+                should_break = (actual_last_value is not None and new_value is not None and
+                               isinstance(actual_last_value, (int, float)) and isinstance(new_value, (int, float)) and
+                               new_value < actual_last_value)
+                break_reason = f"{variable_name} decreased from {actual_last_value} to {new_value}"
             elif condition.startswith("equals:"):
                 target_value = condition[7:]  # Remove "equals:" prefix
+                actual_last_value = self.variable_snapshots.get(variable_name)
                 try:
                     if isinstance(new_value, (int, float)):
                         target_value = type(new_value)(target_value)
-                    should_break = new_value == target_value
+                    # Only break if value changed AND now equals target
+                    should_break = new_value == target_value and actual_last_value != new_value
                     break_reason = f"{variable_name} equals {target_value}"
                 except (ValueError, TypeError):
-                    should_break = str(new_value) == target_value
+                    should_break = str(new_value) == target_value and str(actual_last_value) != str(new_value)
                     break_reason = f"{variable_name} equals '{target_value}'"
             elif condition.startswith("gt:"):
                 target_value = condition[3:]  # Remove "gt:" prefix
+                actual_last_value = self.variable_snapshots.get(variable_name)
                 try:
                     if isinstance(new_value, (int, float)):
                         target_value = type(new_value)(target_value)
-                        should_break = new_value > target_value
-                        break_reason = f"{variable_name} > {target_value} (value: {new_value})"
+                        # Only break if crossing the threshold (wasn't > target before, but is now)
+                        was_above_threshold = (actual_last_value is not None and 
+                                             isinstance(actual_last_value, (int, float)) and 
+                                             actual_last_value > target_value)
+                        is_above_threshold = new_value > target_value
+                        should_break = is_above_threshold and not was_above_threshold
+                        break_reason = f"{variable_name} crossed threshold > {target_value} (value: {new_value})"
                 except (ValueError, TypeError):
                     pass
             elif condition.startswith("lt:"):
                 target_value = condition[3:]  # Remove "lt:" prefix
+                actual_last_value = self.variable_snapshots.get(variable_name)
                 try:
                     if isinstance(new_value, (int, float)):
                         target_value = type(new_value)(target_value)
-                        should_break = new_value < target_value
-                        break_reason = f"{variable_name} < {target_value} (value: {new_value})"
+                        # Only break if crossing the threshold (wasn't < target before, but is now)
+                        was_below_threshold = (actual_last_value is not None and 
+                                             isinstance(actual_last_value, (int, float)) and 
+                                             actual_last_value < target_value)
+                        is_below_threshold = new_value < target_value
+                        should_break = is_below_threshold and not was_below_threshold
+                        break_reason = f"{variable_name} crossed threshold < {target_value} (value: {new_value})"
                 except (ValueError, TypeError):
                     pass
 
@@ -1119,92 +1154,295 @@ class RenpyDebugger(object):
             print(f"Error evaluating data breakpoint condition '{condition}': {e}")
             return False
 
-    def _trigger_data_breakpoint_at_source_location(self, variable_name, old_value, new_value):
+    def _trigger_data_breakpoint_here(self, variable_name, old_value, new_value):
         """
-        Trigger a data breakpoint at the actual source location where the variable was changed.
-        Uses the same approach as regular breakpoints to map to the correct .rpy file and line.
+        Trigger a data breakpoint immediately with proper .rpy context.
+        This tries to find the current .rpy context and break there directly.
         """
-        if not self.debugpy_enabled:
-            print("❌ debugpy not enabled, cannot trigger VSCode breakpoint")
-            return
+        # Prevent duplicate triggers for the same variable change
+        if (self.pending_data_breakpoint and 
+            self.pending_data_breakpoint.get('variable_name') == variable_name and
+            self.pending_data_breakpoint.get('new_value') == new_value):
+            return  # Already have a pending breakpoint for this change
 
+        # Try to get current .rpy execution context
+        current_rpy_file, current_rpy_line = self._find_current_rpy_context()
+        
+        # Also try a more thorough approach to find the exact line
+        exact_file, exact_line = self._find_exact_assignment_line()
+        
+        # Use the more specific line if we found it
+        if exact_file and exact_line:
+            current_rpy_file, current_rpy_line = exact_file, exact_line
+            print(f"🎯 Found exact assignment line: {exact_file}:{exact_line}")
+        elif current_rpy_file and current_rpy_line:
+            print(f"🔍 Using general context: {current_rpy_file}:{current_rpy_line}")
+        
+        if current_rpy_file and current_rpy_line:
+            # We have .rpy context, trigger breakpoint immediately
+            print(f"\n{'='*60}")
+            print(f"🔍 DATA BREAKPOINT HIT")
+            print(f"📁 File: {current_rpy_file}")
+            print(f"📍 Line: {current_rpy_line}")
+            print(f"🔄 Variable: {variable_name}")
+            print(f"📊 Change: {old_value} → {new_value}")
+            print(f"{'='*60}\n")
+            
+            # Update current context for debugger
+            self.current_file = current_rpy_file
+            self.current_line = current_rpy_line
+            self.current_type = 'script'
+            
+            # Trigger VSCode breakpoint immediately
+            if self.debugpy_enabled:
+                self._trigger_immediate_vscode_breakpoint(variable_name, old_value, new_value)
+            else:
+                # Store for custom debugging
+                self.pending_data_breakpoint = {
+                    'variable_name': variable_name,
+                    'old_value': old_value,
+                    'new_value': new_value,
+                    'breakpoint_type': 'data_breakpoint'
+                }
+                self._custom_data_breakpoint_pause(self.pending_data_breakpoint)
+        else:
+            # No .rpy context found, defer to next script statement
+            self.pending_data_breakpoint = {
+                'variable_name': variable_name,
+                'old_value': old_value,
+                'new_value': new_value,
+                'breakpoint_type': 'data_breakpoint'
+            }
+            
+            print(f"\n{'='*60}")
+            print(f"🔍 DATA BREAKPOINT TRIGGERED")
+            print(f"🔄 Variable: {variable_name}")
+            print(f"📊 Change: {old_value} → {new_value}")
+            print(f"⏳ Will break on next script statement...")
+            print(f"{'='*60}\n")
+
+    def _find_current_rpy_context(self):
+        """
+        Find the current .rpy execution context using stack inspection to find the exact line.
+        Returns (filename, line_number) or (None, None) if not found.
+        """
+        # First try stack inspection to find the exact line where the variable was changed
+        try:
+            import inspect
+            current_frame = inspect.currentframe()
+            try:
+                frame = current_frame
+                best_rpy_location = None
+                
+                while frame:
+                    frame = frame.f_back
+                    if frame is None:
+                        break
+
+                    filename = frame.f_code.co_filename
+
+                    # Skip debugger frames
+                    if ('debugger.py' in filename or 'testing/' in filename):
+                        continue
+
+                    # Direct .rpy files (best case - this is what we want!)
+                    if filename.endswith('.rpy'):
+                        # This is likely the exact line where the variable assignment happened
+                        return os.path.basename(filename), frame.f_lineno
+
+                    # Ren'Py execution frames - look for node information
+                    if ('ast.py' in filename or 'script.py' in filename or 'python.py' in filename):
+                        try:
+                            frame_locals = frame.f_locals
+                            node = frame_locals.get('node')
+                            if node and hasattr(node, 'filename') and hasattr(node, 'linenumber'):
+                                # Store this as a fallback, but keep looking for direct .rpy frames
+                                best_rpy_location = (os.path.basename(node.filename), node.linenumber)
+                        except Exception:
+                            pass
+
+                # If we didn't find a direct .rpy frame, use the best node information we found
+                if best_rpy_location:
+                    return best_rpy_location
+
+            finally:
+                del current_frame
+        except Exception:
+            pass
+
+        # Fallback to current debugger context (but this might be the label line)
+        if (hasattr(self, 'current_file') and hasattr(self, 'current_line') and 
+            self.current_file and self.current_line and self.current_file.endswith('.rpy')):
+            # Add some debugging info to see what we're getting
+            print(f"🔍 Using debugger context: {self.current_file}:{self.current_line}")
+            return self.current_file, self.current_line
+        
+        # Last resort: try current node context
+        if (hasattr(self, 'current_node') and self.current_node and
+            hasattr(self.current_node, 'filename') and hasattr(self.current_node, 'linenumber')):
+            print(f"🔍 Using node context: {os.path.basename(self.current_node.filename)}:{self.current_node.linenumber}")
+            return os.path.basename(self.current_node.filename), self.current_node.linenumber
+
+        return None, None
+
+    def _find_exact_assignment_line(self):
+        """
+        Try to find the exact line where the variable assignment happened by looking
+        for frames that show Python execution within .rpy files.
+        """
+        try:
+            import inspect
+            current_frame = inspect.currentframe()
+            try:
+                frame = current_frame
+                frame_info = []
+                
+                # Collect information about all frames
+                while frame:
+                    frame = frame.f_back
+                    if frame is None:
+                        break
+
+                    filename = frame.f_code.co_filename
+                    line_no = frame.f_lineno
+                    
+                    # Debug: collect frame info
+                    frame_info.append(f"{os.path.basename(filename)}:{line_no}")
+                    
+                    # Skip debugger frames
+                    if ('debugger.py' in filename or 'testing/' in filename):
+                        continue
+
+                    # Look for Python execution frames that might correspond to $ statements
+                    if ('python.py' in filename or 'execution.py' in filename or 'ast.py' in filename):
+                        # Try to find the .rpy context from frame locals
+                        try:
+                            frame_locals = frame.f_locals
+                            
+                            # Look for execution context indicators
+                            if 'node' in frame_locals:
+                                node = frame_locals['node']
+                                if hasattr(node, 'filename') and hasattr(node, 'linenumber'):
+                                    rpy_file = os.path.basename(node.filename)
+                                    if rpy_file.endswith('.rpy'):
+                                        # Check if this looks like a Python statement node ($ variable = value)
+                                        node_type = type(node).__name__ if hasattr(node, '__class__') else 'unknown'
+                                        if 'Python' in node_type or 'Statement' in node_type:
+                                            print(f"🎯 Found {node_type} node at {rpy_file}:{node.linenumber}")
+                                            return rpy_file, node.linenumber
+                                        else:
+                                            print(f"🔍 Found {node_type} node at {rpy_file}:{node.linenumber}")
+                            
+                            # Look for other context clues
+                            if 'filename' in frame_locals and 'linenumber' in frame_locals:
+                                filename_val = frame_locals['filename']
+                                line_val = frame_locals['linenumber']
+                                if filename_val and str(filename_val).endswith('.rpy'):
+                                    return os.path.basename(filename_val), line_val
+                            
+                            # Look for self.filename and self.linenumber (might be in a node object)
+                            if 'self' in frame_locals:
+                                self_obj = frame_locals['self']
+                                if (hasattr(self_obj, 'filename') and hasattr(self_obj, 'linenumber') and
+                                    str(self_obj.filename).endswith('.rpy')):
+                                    return os.path.basename(self_obj.filename), self_obj.linenumber
+                                    
+                        except Exception:
+                            pass
+
+                print(f"🔍 Frame analysis: {' -> '.join(frame_info[:8])}")
+
+            finally:
+                del current_frame
+        except Exception as e:
+            print(f"Error in exact line detection: {e}")
+
+        return None, None
+
+    def _trigger_immediate_vscode_breakpoint(self, variable_name, old_value, new_value):
+        """
+        Trigger an immediate VSCode breakpoint with proper .rpy file context.
+        Uses the same approach as regular breakpoints to create a fake frame from the .rpy file.
+        """
         try:
             import debugpy
-            import inspect
+            import sys
+            
+            # Get full path to .rpy file
+            rpy_file_path = self._get_full_rpy_path(self.current_file)
+            
+            if rpy_file_path:
+                # Store debugging context
+                debug_context = {
+                    'variable_name': variable_name,
+                    'old_value': old_value,
+                    'new_value': new_value,
+                    'breakpoint_type': 'data_breakpoint',
+                    'rpy_file': self.current_file,
+                    'rpy_line': self.current_line
+                }
 
-            # Find the .rpy file and line where the variable assignment happened
-            rpy_file, line_number = self._find_source_location_for_data_breakpoint()
+                # Make context available globally
+                if not hasattr(sys, '_renpy_data_breakpoint_context'):
+                    sys._renpy_data_breakpoint_context = {}
+                sys._renpy_data_breakpoint_context.update(debug_context)
 
-            if rpy_file and line_number:
-                print(f"🔍 Data breakpoint source: {rpy_file}:{line_number}")
+                print(f"💡 In the debugger, you can:")
+                print(f"   • Inspect '{variable_name}' (current value: {new_value})")
+                print(f"   • Check 'sys._renpy_data_breakpoint_context' for full context")
+                print(f"   • View all variables with the Variables panel")
 
-                # Get full path to .rpy file
-                rpy_file_path = self._get_full_rpy_path(rpy_file)
+                # Show source line if available
+                source_line = self._get_source_line(self.current_file, self.current_line)
+                if source_line:
+                    print(f"📝 Source: {source_line.strip()}")
 
-                if rpy_file_path:
-                    # Provide rich debugging context and trigger breakpoint
+                # Create a fake execution context that appears to be from the .rpy file
+                # This is the same approach used in _handle_vscode_breakpoint for regular breakpoints
+                try:
+                    # Create code that includes the breakpoint call and will be executed "from" the .rpy file
+                    # This is the key: we put debugpy.breakpoint() inside the code that's compiled with .rpy as source
+                    # We need to pad the code to the correct line number
+                    target_line = self.current_line
+                    padding_lines = '\n' * (target_line - 1) if target_line > 1 else ''
+                    
+                    code_str = f'''{padding_lines}import debugpy; debugpy.breakpoint()  # Data breakpoint: {variable_name} changed from {old_value} to {new_value}'''
+                    
+                    # Compile with the .rpy filename so debugger sees it correctly
+                    code = compile(code_str, rpy_file_path, 'exec', dont_inherit=True)
+                    
+                    # Create execution context with debugging variables
+                    exec_globals = {
+                        '__file__': rpy_file_path,
+                        '__name__': f"renpy_{self.current_file}",
+                        'data_breakpoint_info': debug_context,
+                        variable_name: new_value,  # Make the changed variable available
+                        'rpy_file': rpy_file_path,
+                        'rpy_line': self.current_line
+                    }
+                    
+                    # Add all current Ren'Py store variables to the context
                     try:
-                        import sys
-
-                        # Store comprehensive debugging context
-                        debug_context = {
-                            'variable_name': variable_name,
-                            'old_value': old_value,
-                            'new_value': new_value,
-                            'source_file': rpy_file_path,
-                            'source_line': line_number,
-                            'breakpoint_type': 'data_breakpoint',
-                            'rpy_file': rpy_file
-                        }
-
-                        # Make context available globally for debugger access
-                        if not hasattr(sys, '_renpy_data_breakpoint_context'):
-                            sys._renpy_data_breakpoint_context = {}
-                        sys._renpy_data_breakpoint_context.update(debug_context)
-
-                        # Add context to current frame locals for immediate access
-                        frame = sys._getframe()
-                        if frame and hasattr(frame, 'f_locals'):
-                            # Add the changed variable
-                            frame.f_locals[variable_name] = new_value
-                            # Add debugging context
-                            frame.f_locals['data_breakpoint_info'] = debug_context
-                            frame.f_locals['rpy_file'] = rpy_file_path
-                            frame.f_locals['rpy_line'] = line_number
-
-                        # Print clear debugging information
-                        print(f"\n{'='*60}")
-                        print(f"🔍 DATA BREAKPOINT HIT")
-                        print(f"📁 File: {rpy_file_path}")
-                        print(f"📍 Line: {line_number}")
-                        print(f"🔄 Variable: {variable_name}")
-                        print(f"📊 Change: {old_value} → {new_value}")
-                        print(f"{'='*60}")
-                        print(f"💡 In the debugger, you can:")
-                        print(f"   • Inspect '{variable_name}' (current value: {new_value})")
-                        print(f"   • Check 'data_breakpoint_info' for full context")
-                        print(f"   • Use 'rpy_file' and 'rpy_line' for source location")
-                        print(f"{'='*60}\n")
-
-                        # Trigger the debugger breakpoint
-                        import debugpy
-                        debugpy.breakpoint()
-
-                    except Exception as compile_error:
-                        print(f"Error creating data breakpoint context: {compile_error}")
-                        # Fallback to simple breakpoint - but don't call it here to avoid wrong location
-                        print("❌ Could not create proper breakpoint context")
-                else:
-                    print(f"Could not find full path for {rpy_file}")
-                    print("❌ Could not map to .rpy file for breakpoint")
+                        exec_globals.update(renpy.store.__dict__)
+                    except:
+                        pass
+                    
+                    # Execute this code - the debugpy.breakpoint() call inside will appear 
+                    # to be called from the .rpy file location!
+                    exec(code, exec_globals)
+                    
+                except Exception as compile_error:
+                    print(f"Failed to create .rpy execution context: {compile_error}")
+                    # Fallback to regular breakpoint
+                    debugpy.breakpoint()
             else:
-                print("Could not determine source location for data breakpoint")
-                print("❌ Could not find source location for breakpoint")
-
+                print(f"❌ Could not find full path for {self.current_file}")
+                debugpy.breakpoint()  # Fallback breakpoint
+                
         except ImportError:
             print("❌ debugpy not available")
         except Exception as e:
-            print(f"Error triggering data breakpoint: {e}")
+            print(f"Error triggering immediate VSCode breakpoint: {e}")
             import traceback
             traceback.print_exc()
 
@@ -1216,10 +1454,18 @@ class RenpyDebugger(object):
         try:
             import inspect
 
-            # Walk up the stack to find the .rpy file
+            # First try to use the current debugging context if available
+            if hasattr(self, 'current_file') and hasattr(self, 'current_line'):
+                if self.current_file and self.current_line and self.current_file.endswith('.rpy'):
+                    return self.current_file, self.current_line
+
+            # Walk up the stack to find the .rpy file or Ren'Py execution frame
             current_frame = inspect.currentframe()
             try:
                 frame = current_frame
+                rpy_frame = None
+                renpy_execution_frame = None
+                
                 while frame:
                     frame = frame.f_back
                     if frame is None:
@@ -1227,22 +1473,46 @@ class RenpyDebugger(object):
 
                     filename = frame.f_code.co_filename
 
-                    # Skip debugger and internal Ren'Py frames
-                    if ('debugger.py' in filename or
-                        'python.py' in filename or
+                    # Skip debugger frames to avoid stopping at debugger code
+                    if ('debugger.py' in filename or 
+                        'testing/' in filename or
                         '__pycache__' in filename):
                         continue
 
-                    # Look for .rpy files
+                    # Direct .rpy files (best case)
                     if filename.endswith('.rpy'):
-                        return os.path.basename(filename), frame.f_lineno
+                        rpy_frame = (os.path.basename(filename), frame.f_lineno)
+                        break
 
-                    # Also check for Ren'Py script execution frames
-                    if ('ast.py' in filename or 'script.py' in filename):
-                        # Try to get the current .rpy context
-                        if hasattr(self, 'current_file') and hasattr(self, 'current_line'):
-                            if self.current_file and self.current_line:
-                                return self.current_file, self.current_line
+                    # Ren'Py script execution frames (next best case)
+                    if ('ast.py' in filename or 'script.py' in filename or 
+                        'python.py' in filename or 'execution.py' in filename):
+                        if renpy_execution_frame is None:
+                            renpy_execution_frame = frame
+
+                # Return direct .rpy frame if found
+                if rpy_frame:
+                    return rpy_frame
+
+                # Try to extract .rpy context from Ren'Py execution frame
+                if renpy_execution_frame:
+                    # Look for Ren'Py context in frame locals/globals
+                    try:
+                        frame_locals = renpy_execution_frame.f_locals
+                        frame_globals = renpy_execution_frame.f_globals
+                        
+                        # Try to find node information in frame
+                        node = frame_locals.get('node') or frame_globals.get('node')
+                        if node and hasattr(node, 'filename') and hasattr(node, 'linenumber'):
+                            return os.path.basename(node.filename), node.linenumber
+                            
+                        # Try to find current execution context
+                        if hasattr(self, 'current_node') and self.current_node:
+                            if hasattr(self.current_node, 'filename') and hasattr(self.current_node, 'linenumber'):
+                                return os.path.basename(self.current_node.filename), self.current_node.linenumber
+                                
+                    except Exception:
+                        pass
 
             finally:
                 del current_frame  # Prevent reference cycles
@@ -1288,6 +1558,10 @@ class RenpyDebugger(object):
     
     def _should_break(self):
         """Check if we should break at the current location."""
+        # Handle pending data breakpoints first
+        if self.pending_data_breakpoint:
+            return True
+            
         # Handle step mode
         if self.step_mode:
             self.step_mode = False
@@ -1318,6 +1592,11 @@ class RenpyDebugger(object):
     
     def _pause_execution(self, reason):
         """Pause execution and wait for debug commands."""
+        # Handle data breakpoints
+        if self.pending_data_breakpoint:
+            self._handle_data_breakpoint_pause()
+            return
+            
         with self.pause_lock:
             self.paused = True
             self.pause_event.clear()
@@ -1335,6 +1614,90 @@ class RenpyDebugger(object):
         if source_line:
             print(f"Source: {source_line.strip()}")
             
+        # Wait for continue/step command
+        self.pause_event.wait()
+    
+    def _handle_data_breakpoint_pause(self):
+        """Handle pausing execution for a data breakpoint."""
+        if not self.pending_data_breakpoint:
+            return
+            
+        data_bp = self.pending_data_breakpoint
+        self.pending_data_breakpoint = None  # Clear the pending breakpoint
+        
+        if self.debugpy_enabled:
+            try:
+                import debugpy
+                import sys
+                
+                # Store comprehensive debugging context
+                debug_context = {
+                    'variable_name': data_bp['variable_name'],
+                    'old_value': data_bp['old_value'],
+                    'new_value': data_bp['new_value'],
+                    'breakpoint_type': 'data_breakpoint',
+                    'rpy_file': self.current_file,
+                    'rpy_line': self.current_line
+                }
+
+                # Make context available globally for debugger access
+                if not hasattr(sys, '_renpy_data_breakpoint_context'):
+                    sys._renpy_data_breakpoint_context = {}
+                sys._renpy_data_breakpoint_context.update(debug_context)
+
+                # Print detailed debugging information
+                print(f"\n{'='*60}")
+                print(f"🔍 DATA BREAKPOINT HIT AT SOURCE LOCATION")
+                print(f"📁 File: {self.current_file}")
+                print(f"📍 Line: {self.current_line}")
+                print(f"🔄 Variable: {data_bp['variable_name']}")
+                print(f"📊 Change: {data_bp['old_value']} → {data_bp['new_value']}")
+                
+                # Show source line if available
+                source_line = self._get_source_line(self.current_file, self.current_line)
+                if source_line:
+                    print(f"📝 Source: {source_line.strip()}")
+                    
+                print(f"{'='*60}")
+                print(f"💡 In the debugger, you can:")
+                print(f"   • Inspect '{data_bp['variable_name']}' (current value: {data_bp['new_value']})")
+                print(f"   • Check 'sys._renpy_data_breakpoint_context' for full context")
+                print(f"   • View all variables with the Variables panel")
+                print(f"{'='*60}\n")
+
+                # Trigger the debugger breakpoint at the current .rpy location
+                debugpy.breakpoint()
+                
+            except ImportError:
+                print("❌ debugpy not available, using custom pause")
+                self._custom_data_breakpoint_pause(data_bp)
+            except Exception as e:
+                print(f"Error triggering VSCode data breakpoint: {e}")
+                self._custom_data_breakpoint_pause(data_bp)
+        else:
+            self._custom_data_breakpoint_pause(data_bp)
+    
+    def _custom_data_breakpoint_pause(self, data_bp):
+        """Handle data breakpoint pause for non-VSCode debugging."""
+        with self.pause_lock:
+            self.paused = True
+            self.pause_event.clear()
+            
+        print(f"\n=== DATA BREAKPOINT PAUSED ===")
+        print(f"Variable: {data_bp['variable_name']}")
+        print(f"Change: {data_bp['old_value']} → {data_bp['new_value']}")
+        print(f"Location: {self.current_file}:{self.current_line}")
+        
+        if self.current_node:
+            print(f"Node: {type(self.current_node).__name__}")
+            
+        # Show source line if available
+        source_line = self._get_source_line(self.current_file, self.current_line)
+        if source_line:
+            print(f"Source: {source_line.strip()}")
+            
+        print("Use continue_execution() or step() to proceed")
+        
         # Wait for continue/step command
         self.pause_event.wait()
     
@@ -1395,7 +1758,7 @@ class RenpyDebugger(object):
                         # Trigger breakpoint if needed - this will break at the correct .rpy location
                         if should_break:
                             print(f"🔍 Data breakpoint triggered in Python execution: {var_name} = {new_value}")
-                            self._trigger_data_breakpoint_at_source_location(var_name, old_value, new_value)
+                            self._trigger_data_breakpoint_here(var_name, old_value, new_value)
             
             return result
         
@@ -1725,6 +2088,39 @@ def test_variable_patching():
         print("Dictionary assignment completed")
     except Exception as e:
         print(f"Dictionary assignment failed: {e}")
+    
+    return True
+
+def test_data_breakpoint_flow():
+    """Test the complete data breakpoint flow with debugging output."""
+    debugger = get_debugger()
+    
+    print("\n=== Testing Data Breakpoint Flow ===")
+    
+    # Enable debugger if not already enabled
+    if not debugger.enabled:
+        debugger.enable()
+    
+    # Add a test data breakpoint
+    print("Adding data breakpoint for 'flow_test_var'...")
+    add_data_breakpoint("flow_test_var", "change")
+    
+    print(f"Data breakpoints: {list(debugger.data_breakpoints.keys())}")
+    print(f"Pending breakpoint: {debugger.pending_data_breakpoint}")
+    
+    # Test variable change
+    print("Changing variable...")
+    renpy.store.flow_test_var = 123
+    
+    print(f"After change - Pending breakpoint: {debugger.pending_data_breakpoint}")
+    
+    # Simulate script execution check
+    print("Simulating script execution check...")
+    if debugger.pending_data_breakpoint:
+        print("✅ Pending data breakpoint detected!")
+        print(f"Should break: {debugger._should_break()}")
+    else:
+        print("❌ No pending data breakpoint found")
     
     return True
 
