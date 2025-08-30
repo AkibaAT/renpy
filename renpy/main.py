@@ -596,22 +596,120 @@ def main():
             except Exception as e:
                 print(f"Warning: Failed to start API server: {e}")
 
-        # Check for Debug Adapter Protocol server startup
-        if hasattr(renpy.game.args, 'dap') and renpy.game.args.dap:
+        # Check for native Debug Adapter Protocol server startup
+        native_dap = False
+        dap_port = None
+        try:
+            if getattr(renpy.game.args, 'native_dap', False):
+                native_dap = True
+                dap_port = getattr(renpy.game.args, 'dap_port', 8765)
+            elif getattr(renpy.game.args, 'dap', False):
+                # Backward compatibility: treat --dap/--debug-port as native DAP
+                native_dap = True
+                dap_port = getattr(renpy.game.args, 'debug_port', 8765)
+        except Exception:
+            pass
+
+        if native_dap:
             try:
-                debug_port = getattr(renpy.game.args, 'debug_port', 5678)
-                
-                # Start the Debug Adapter Protocol server
-                from renpy.testing.debugger import enable_vscode_debugging
-                enable_vscode_debugging(port=debug_port, wait_for_client=False)
-                print(f"Debug server started on localhost:{debug_port}")
-                print(f"Connect your VSCode debugger to localhost:{debug_port}")
-                print("Set breakpoints in .rpy files - they will work automatically!")
-                
-            except ImportError:
-                print("Warning: debugpy not available. Debug server not started.")
+                from renpy.testing import debugger as _dbg
+                from renpy.testing.dap_server import start_dap_server, stop_dap_server
+
+                # Ensure debugger is enabled and Python block tracing is available
+                _dbg.enable()
+                # Mark native debug enabled for downstream checks
+                _dbg.native_debug_enabled = True
+
+                # Force-enable developer tools when running with the debugger
+                try:
+                    renpy.config.developer = True
+                    renpy.config.console = True
+                    # Ensure the Interactive Director is enabled
+                    import renpy.store as _store
+                    _store._director_enable = True
+                    # Make shutdowns snappy while debugging (no audio fadeouts)
+                    renpy.config.fadeout_audio = 0.0
+                    # Keep director enabled across reloads/interactions
+                    def _ensure_director_enabled(*_a, **_k):
+                        try:
+                            import renpy.store as __store
+                            __store._director_enable = True
+                        except Exception:
+                            pass
+                    if _ensure_director_enabled not in renpy.config.start_interact_callbacks:
+                        renpy.config.start_interact_callbacks.append(_ensure_director_enabled)
+                    if _ensure_director_enabled not in renpy.config.after_load_callbacks:
+                        renpy.config.after_load_callbacks.append(_ensure_director_enabled)
+                except Exception:
+                    pass
+
+                # Avoid noisy re-announce on reloads if server already running
+                had_server = False
+                try:
+                    had_server = getattr(renpy, '_dap_server', None) not in (None,)
+                except Exception:
+                    had_server = False
+
+                from renpy.testing.dap_server import init_dap_once
+                # Only start once per process lifetime. Guard with session flag.
+                dap_started_flag = "_dap_server_started_once"
+                if not renpy.session.get(dap_started_flag, False):
+                    renpy.session[dap_started_flag] = True
+                    if init_dap_once(port=dap_port):
+                        print(f"Native DAP server started on localhost:{dap_port}")
+                        print("Connect VSCode using the Ren'Py DAP configuration.")
+                    else:
+                        print("Warning: Failed to start native DAP server.")
+                else:
+                    print(f"Native DAP server already running on localhost:{dap_port}")
+
+                # Ensure DAP server and debugger are shut down promptly on final quit (not reload).
+                def _shutdown_dap():
+                    try:
+                        # Prevent autosave wait from stalling shutdown
+                        try:
+                            import renpy.loadsave as _ls
+                            if hasattr(_ls, 'autosave_not_running'):
+                                _ls.autosave_not_running.set()
+                        except Exception:
+                            pass
+
+                        # Stop audio quickly
+                        try:
+                            renpy.audio.audio.fadeout_all()
+                            renpy.audio.audio.quit()
+                        except Exception:
+                            pass
+
+                        stop_dap_server()
+                    except Exception:
+                        pass
+                    try:
+                        # Only disable if still enabled to avoid redundant work
+                        st = None
+                        try:
+                            st = _dbg.get_state()
+                        except Exception:
+                            pass
+                        if not isinstance(st, dict) or st.get('enabled'):
+                            _dbg.disable()
+                    except Exception:
+                        pass
+                # Use quit_callbacks (runs only on final quit). Avoid at_exit_callbacks
+                # which are invoked on script reloads, killing the DAP server mid-session.
+                if _shutdown_dap not in renpy.config.quit_callbacks:
+                    renpy.config.quit_callbacks.append(_shutdown_dap)
+                try:
+                    # If previously registered incorrectly, remove it.
+                    if _shutdown_dap in renpy.config.at_exit_callbacks:
+                        renpy.config.at_exit_callbacks.remove(_shutdown_dap)
+                except Exception:
+                    pass
+
+                # Heal server after script reloads/interactions.
+                # No heal callbacks necessary when listener is started once and independent
             except Exception as e:
-                print(f"Warning: Failed to start debug server: {e}")
+                print(f"Warning: Native DAP server initialization failed: {e}")
 
         # Start things running.
         restart = None

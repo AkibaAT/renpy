@@ -165,8 +165,6 @@ label start:
     e "Hi2! My name is Eileen, and I'd like to welcome you to the Ren'Py tutorial."
     e "Hi3! My name is Eileen, and I'd like to welcome you to the Ren'Py tutorial."
 
-    jump data_breakpoint_demo
-
     show countdown
 
     show eileen happy

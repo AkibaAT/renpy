@@ -65,6 +65,10 @@ class RenpyDebugger(object):
         self.enabled = False
         self.paused = False
         self.step_mode = False
+        self.step_type = None  # 'in', 'over', 'out'
+        self.step_depth = None
+        self.step_origin = None  # (file, line)
+        self.last_break_reason = 'breakpoint'
         
         # Current execution context
         self.current_node = None
@@ -75,6 +79,9 @@ class RenpyDebugger(object):
         # Synchronization
         self.pause_event = threading.Event()
         self.pause_lock = threading.RLock()
+
+        # Optional callback registered by native DAP server to observe pauses
+        self.pause_listener = None
         
         # Python debugging
         self.python_enabled = False
@@ -549,7 +556,7 @@ class RenpyDebugger(object):
         if self.debugpy_enabled:
             self._handle_vscode_breakpoint(node)
         elif self._should_break():
-            self._pause_execution("Breakpoint")
+            self._pause_execution(self.last_break_reason)
     
     def _handle_vscode_breakpoint(self, node):
         """Handle breakpoint checking when VSCode debugging is enabled."""
@@ -664,16 +671,31 @@ class RenpyDebugger(object):
         with self.pause_lock:
             self.paused = False
             self.step_mode = False
+            self.step_type = None
+            self.step_depth = None
+            self.step_origin = None
             self.pause_event.set()
         print("Continuing execution...")
         
-    def step_execution(self):
-        """Execute one step and pause again."""
+    def step_execution(self, mode='in'):
+        """Execute one step and pause again. mode: 'in', 'over', or 'out'"""
         with self.pause_lock:
             self.paused = False
             self.step_mode = True
+            self.step_type = mode
+            self.step_depth = self._current_call_depth()
+            self.step_origin = (self.current_file, self.current_line)
             self.pause_event.set()
-        print("Stepping...")
+        print(f"Stepping ({mode})...")
+
+    def step_in(self):
+        self.step_execution('in')
+
+    def step_over(self):
+        self.step_execution('over')
+
+    def step_out(self):
+        self.step_execution('out')
     
     def get_current_state(self):
         """Get current debugging state."""
@@ -1555,6 +1577,14 @@ class RenpyDebugger(object):
             stack.append({'error': str(e)})
             
         return stack
+
+    def _current_call_depth(self):
+        try:
+            if renpy.game.context:
+                return len(renpy.game.context().call_location_stack)
+        except Exception:
+            pass
+        return 0
     
     def _should_break(self):
         """Check if we should break at the current location."""
@@ -1562,10 +1592,27 @@ class RenpyDebugger(object):
         if self.pending_data_breakpoint:
             return True
             
-        # Handle step mode
+        # Handle step mode with depth semantics
         if self.step_mode:
-            self.step_mode = False
-            return True
+            depth = self._current_call_depth()
+            origin_file, origin_line = self.step_origin if self.step_origin else (None, None)
+            changed = (self.current_file, self.current_line) != (origin_file, origin_line)
+            should = False
+            if self.step_type == 'in':
+                should = changed
+            elif self.step_type == 'over':
+                should = changed and (depth is not None and self.step_depth is not None and depth <= self.step_depth)
+            elif self.step_type == 'out':
+                should = (depth is not None and self.step_depth is not None and depth < self.step_depth)
+            else:
+                should = changed
+
+            if should:
+                self.step_mode = False
+                self.last_break_reason = 'step'
+                return True
+            else:
+                return False
             
         # Check breakpoints
         if self.current_file in self.breakpoints:
@@ -1586,6 +1633,7 @@ class RenpyDebugger(object):
                         
                 # Increment hit count
                 bp_info['hit_count'] += 1
+                self.last_break_reason = 'breakpoint'
                 return True
                 
         return False
@@ -1596,11 +1644,20 @@ class RenpyDebugger(object):
         if self.pending_data_breakpoint:
             self._handle_data_breakpoint_pause()
             return
-            
+
         with self.pause_lock:
             self.paused = True
             self.pause_event.clear()
-            
+
+        # Notify DAP server if present
+        try:
+            if self.pause_listener:
+                # Prefer the computed last_break_reason for DAP mapping
+                pause_reason = (self.last_break_reason or reason or 'breakpoint')
+                self.pause_listener(pause_reason, self.get_current_state())
+        except Exception:
+            pass
+
         print(f"\n=== EXECUTION PAUSED ===")
         print(f"Reason: {reason}")
         print(f"Type: {self.current_type}")
@@ -1682,6 +1739,13 @@ class RenpyDebugger(object):
         with self.pause_lock:
             self.paused = True
             self.pause_event.clear()
+
+        # Notify DAP server if present
+        try:
+            if self.pause_listener:
+                self.pause_listener("data_breakpoint", self.get_current_state())
+        except Exception:
+            pass
             
         print(f"\n=== DATA BREAKPOINT PAUSED ===")
         print(f"Variable: {data_bp['variable_name']}")
@@ -1781,7 +1845,7 @@ class RenpyDebugger(object):
                 self.current_type = 'python'
                 
                 if self._should_break():
-                    self._pause_execution("Breakpoint")
+                    self._pause_execution(self.last_break_reason)
                     
         # Call original trace function
         if self.original_trace:
@@ -1900,6 +1964,8 @@ class RenpyDebugger(object):
 
 # Global debugger instance
 _debugger = None
+# Indicates if the native DAP debugger is running
+native_debug_enabled = False
 
 def get_debugger():
     """Get the global debugger instance."""
@@ -1947,7 +2013,19 @@ def continue_execution():
 
 def step():
     """Step one statement."""
-    get_debugger().step_execution()
+    get_debugger().step_in()
+
+def step_in():
+    """Step into."""
+    get_debugger().step_in()
+
+def step_over():
+    """Step over."""
+    get_debugger().step_over()
+
+def step_out():
+    """Step out."""
+    get_debugger().step_out()
 
 def get_state():
     """Get current debugging state."""
@@ -2123,4 +2201,3 @@ def test_data_breakpoint_flow():
         print("❌ No pending data breakpoint found")
     
     return True
-
