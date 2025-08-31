@@ -129,7 +129,7 @@ class StateInspector(object):
     
     def get_scene_info(self):
         """
-        Get current scene and screen information.
+        Get current scene and screen information using Interactive Director APIs.
 
         Returns:
             dict: Dictionary containing scene and screen information
@@ -144,7 +144,14 @@ class StateInspector(object):
                     'sound': [],
                     'voice': None
                 },
-                'debug_info': []
+                'debug_info': [],
+                # Interactive Director compatible data
+                'available_tags': [],
+                'showing_tags': [],
+                'available_transforms': [],
+                'audio_channels': [],
+                'audio_files': {},
+                'transitions': []
             }
 
             # Get current context and scene lists
@@ -290,9 +297,86 @@ class StateInspector(object):
             except Exception:
                 pass
 
+            # Add Interactive Director compatible data
+            try:
+                # Get available image tags (same as interactive director)
+                scene_info['available_tags'] = [
+                    tag for tag in renpy.get_available_image_tags()
+                    if not tag.startswith("_")
+                ]
+
+                # Get currently showing tags
+                scene_info['showing_tags'] = list(renpy.get_showing_tags())
+
+                # Get available transforms (from director module if available)
+                try:
+                    import store.director as director
+                    scene_info['available_transforms'] = getattr(director, 'transforms', ['left', 'center', 'right'])
+                    scene_info['transitions'] = getattr(director, 'transitions', ['dissolve', 'pixellate'])
+                    scene_info['audio_channels'] = getattr(director, 'audio_channels', ['music', 'sound', 'audio'])
+                    scene_info['audio_files'] = getattr(director, 'audio_files', {})
+                except Exception:
+                    # Fallback defaults
+                    scene_info['available_transforms'] = ['left', 'center', 'right']
+                    scene_info['transitions'] = ['dissolve', 'pixellate']
+                    scene_info['audio_channels'] = ['music', 'sound', 'audio']
+                    scene_info['audio_files'] = {}
+
+            except Exception:
+                # Ensure we have at least empty lists
+                scene_info['available_tags'] = []
+                scene_info['showing_tags'] = []
+                scene_info['available_transforms'] = []
+                scene_info['transitions'] = []
+                scene_info['audio_channels'] = []
+                scene_info['audio_files'] = {}
+
             return scene_info
         except Exception as e:
             return {'shown_images': [], 'active_screens': [], 'scene_lists': {}}
+
+    def get_image_attributes(self, tag):
+        """
+        Get available attributes for a specific image tag.
+
+        Args:
+            tag (str): The image tag to get attributes for
+
+        Returns:
+            list: List of available attributes for the tag
+        """
+        try:
+            if not tag:
+                return []
+            return renpy.get_ordered_image_attributes(tag, [])
+        except Exception:
+            return []
+
+    def get_behind_tags(self, exclude_tag=None):
+        """
+        Get list of tags that can be used for 'behind' positioning.
+
+        Args:
+            exclude_tag (str): Tag to exclude from the list
+
+        Returns:
+            list: List of tags that can be used for behind positioning
+        """
+        try:
+            showing_tags = renpy.get_showing_tags()
+            scene_tags = {'bg'}  # Common scene tags
+
+            rv = []
+            for tag in showing_tags:
+                if tag in scene_tags:
+                    continue
+                if tag == exclude_tag:
+                    continue
+                rv.append(tag)
+
+            return rv
+        except Exception:
+            return []
     
     def get_dialogue_info(self):
         """

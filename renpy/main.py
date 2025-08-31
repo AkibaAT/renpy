@@ -576,44 +576,29 @@ def main():
         renpy.translation.init_translation()
         log_clock("Init translation")
 
-        # Check for API server startup
-        if (hasattr(renpy.game.args, 'api') and renpy.game.args.api) or "--http-server" in sys.argv:
-            try:
-                # Get port from parsed arguments or default
-                if hasattr(renpy.game.args, 'port'):
-                    port = renpy.game.args.port
-                else:
-                    port = 8080
-
-                # Start the API server
-                from renpy import testing
-                testing.start_http_server(port=port)
-                print(f"API server started at http://localhost:{port}")
-
-            except ImportError:
-                if hasattr(renpy.game.args, 'api') and renpy.game.args.api:
-                    print("Warning: API server not available in this build")
-            except Exception as e:
-                print(f"Warning: Failed to start API server: {e}")
-
-        # Check for native Debug Adapter Protocol server startup
-        native_dap = False
-        dap_port = None
+        # Check for unified debug server startup
+        debug_enabled = False
         try:
-            if getattr(renpy.game.args, 'native_dap', False):
-                native_dap = True
-                dap_port = getattr(renpy.game.args, 'dap_port', 8765)
+            # Check for new --debug flag
+            if getattr(renpy.game.args, 'debug', False):
+                debug_enabled = True
+            # Check for legacy flags for backward compatibility
+            elif getattr(renpy.game.args, 'native_dap', False):
+                debug_enabled = True
+                print("Warning: --native-dap is deprecated, use --debug instead")
+            elif getattr(renpy.game.args, 'api', False) or "--http-server" in sys.argv:
+                debug_enabled = True
+                print("Warning: --api/--http-server is deprecated, use --debug instead")
             elif getattr(renpy.game.args, 'dap', False):
-                # Backward compatibility: treat --dap/--debug-port as native DAP
-                native_dap = True
-                dap_port = getattr(renpy.game.args, 'debug_port', 8765)
+                debug_enabled = True
+                print("Warning: --dap is deprecated, use --debug instead")
         except Exception:
             pass
 
-        if native_dap:
+        if debug_enabled:
             try:
                 from renpy.testing import debugger as _dbg
-                from renpy.testing.dap_server import start_dap_server, stop_dap_server
+                from renpy.testing.unified_debug_server import start_unified_debug_server, stop_unified_debug_server
 
                 # Ensure debugger is enabled and Python block tracing is available
                 _dbg.enable()
@@ -646,25 +631,32 @@ def main():
                 # Avoid noisy re-announce on reloads if server already running
                 had_server = False
                 try:
-                    had_server = getattr(renpy, '_dap_server', None) not in (None,)
+                    had_server = getattr(renpy, '_unified_debug_server', None) is not None
                 except Exception:
                     had_server = False
 
-                from renpy.testing.dap_server import init_dap_once
                 # Only start once per process lifetime. Guard with session flag.
-                dap_started_flag = "_dap_server_started_once"
-                if not renpy.session.get(dap_started_flag, False):
-                    renpy.session[dap_started_flag] = True
-                    if init_dap_once(port=dap_port):
-                        print(f"Native DAP server started on localhost:{dap_port}")
-                        print("Connect VSCode using the Ren'Py DAP configuration.")
-                    else:
-                        print("Warning: Failed to start native DAP server.")
-                else:
-                    print(f"Native DAP server already running on localhost:{dap_port}")
+                debug_started_flag = "_unified_debug_server_started_once"
+                if not renpy.session.get(debug_started_flag, False):
+                    renpy.session[debug_started_flag] = True
 
-                # Ensure DAP server and debugger are shut down promptly on final quit (not reload).
-                def _shutdown_dap():
+                    # Get preferred ports from arguments
+                    preferred_ports = {
+                        'dap': getattr(renpy.game.args, 'dap_port', 8765),
+                        'http': getattr(renpy.game.args, 'port', 8080),  # Use --port for HTTP API
+                        'websocket': getattr(renpy.game.args, 'websocket_port', 8081)
+                    }
+
+                    unified_server = start_unified_debug_server(preferred_ports)
+                    if unified_server:
+                        print("Connect your VSCode extension or use the HTTP API for debugging.")
+                    else:
+                        print("Warning: Failed to start unified debug server.")
+                else:
+                    print("Unified debug server already running.")
+
+                # Ensure unified debug server and debugger are shut down promptly on final quit (not reload).
+                def _shutdown_unified_debug():
                     try:
                         # Prevent autosave wait from stalling shutdown
                         try:
@@ -681,7 +673,7 @@ def main():
                         except Exception:
                             pass
 
-                        stop_dap_server()
+                        stop_unified_debug_server()
                     except Exception:
                         pass
                     try:
@@ -695,21 +687,20 @@ def main():
                             _dbg.disable()
                     except Exception:
                         pass
+
                 # Use quit_callbacks (runs only on final quit). Avoid at_exit_callbacks
-                # which are invoked on script reloads, killing the DAP server mid-session.
-                if _shutdown_dap not in renpy.config.quit_callbacks:
-                    renpy.config.quit_callbacks.append(_shutdown_dap)
+                # which are invoked on script reloads, killing the debug server mid-session.
+                if _shutdown_unified_debug not in renpy.config.quit_callbacks:
+                    renpy.config.quit_callbacks.append(_shutdown_unified_debug)
                 try:
                     # If previously registered incorrectly, remove it.
-                    if _shutdown_dap in renpy.config.at_exit_callbacks:
-                        renpy.config.at_exit_callbacks.remove(_shutdown_dap)
+                    if _shutdown_unified_debug in renpy.config.at_exit_callbacks:
+                        renpy.config.at_exit_callbacks.remove(_shutdown_unified_debug)
                 except Exception:
                     pass
 
-                # Heal server after script reloads/interactions.
-                # No heal callbacks necessary when listener is started once and independent
             except Exception as e:
-                print(f"Warning: Native DAP server initialization failed: {e}")
+                print(f"Warning: Unified debug server initialization failed: {e}")
 
         # Start things running.
         restart = None

@@ -1,0 +1,208 @@
+body { 
+    font-family: Arial, sans-serif; 
+    margin: 0; 
+    padding: 0; 
+    background: #2c3e50;
+    color: white;
+    overflow: hidden;
+}
+
+.builder-container { 
+    display: flex; 
+    height: 100vh; 
+}
+
+.sidebar { 
+    width: 300px; 
+    background: #34495e; 
+    padding: 15px; 
+    overflow-y: auto;
+    border-right: 2px solid #1abc9c;
+}
+
+.scene-canvas { 
+    flex: 1; 
+    position: relative; 
+    background: #ecf0f1;
+    overflow: hidden;
+}
+
+.canvas-container {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    background: linear-gradient(45deg, #f0f0f0 25%, transparent 25%), 
+                linear-gradient(-45deg, #f0f0f0 25%, transparent 25%), 
+                linear-gradient(45deg, transparent 75%, #f0f0f0 75%), 
+                linear-gradient(-45deg, transparent 75%, #f0f0f0 75%);
+    background-size: 20px 20px;
+    background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+}
+
+.scene-object {
+    position: absolute;
+    border: 2px solid #3498db;
+    border-radius: 5px;
+    cursor: move;
+    font-weight: bold;
+    color: white;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.7);
+    user-select: none;
+    transition: transform 0.1s ease;
+    overflow: hidden;
+    background: rgba(0,0,0,0.1);
+}
+
+.scene-object:hover {
+    transform: scale(1.05);
+    border-color: #e74c3c;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+}
+
+.scene-object.dragging {
+    transform: scale(1.1);
+    z-index: 1000;
+    box-shadow: 0 8px 25px rgba(0,0,0,0.4);
+}
+
+.asset-browser {
+    margin-bottom: 20px;
+}
+
+.asset-category {
+    margin-bottom: 15px;
+}
+
+.asset-category h3 {
+    margin: 0 0 10px 0;
+    color: #1abc9c;
+    border-bottom: 1px solid #1abc9c;
+    padding-bottom: 5px;
+}
+
+.asset-item {
+    background: #2c3e50;
+    border: 1px solid #1abc9c;
+    border-radius: 3px;
+    padding: 8px;
+    margin: 5px 0;
+    cursor: grab;
+    transition: background 0.2s;
+}
+
+.asset-item:hover {
+    background: #1abc9c;
+    color: #2c3e50;
+}
+
+.asset-item:active {
+    cursor: grabbing;
+}
+
+.toolbar {
+    background: #1abc9c;
+    padding: 10px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.btn {
+    padding: 8px 15px;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: background 0.2s;
+}
+
+.btn-primary { background: #3498db; color: white; }
+.btn-primary:hover { background: #2980b9; }
+.btn-success { background: #27ae60; color: white; }
+.btn-success:hover { background: #229954; }
+.btn-danger { background: #e74c3c; color: white; }
+.btn-danger:hover { background: #c0392b; }
+
+.coordinates {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(0,0,0,0.7);
+    color: white;
+    padding: 5px 10px;
+    border-radius: 3px;
+    font-family: monospace;
+}
+
+.grid-toggle {
+    position: absolute;
+    top: 50px;
+    right: 10px;
+    background: rgba(0,0,0,0.7);
+    color: white;
+    padding: 5px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.properties-panel {
+    background: #2c3e50;
+    border-top: 2px solid #1abc9c;
+    padding: 15px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.property-group {
+    margin-bottom: 15px;
+}
+
+.property-group label {
+    display: block;
+    margin-bottom: 5px;
+    color: #1abc9c;
+}
+
+.property-group input, .property-group select {
+    width: 100%;
+    padding: 5px;
+    border: 1px solid #1abc9c;
+    border-radius: 3px;
+    background: #34495e;
+    color: white;
+}
+
+.scene-object-item {
+    background: #34495e;
+    border: 1px solid #1abc9c;
+    border-radius: 3px;
+    padding: 8px;
+    margin: 3px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.9em;
+}
+
+.scene-object-item.hidden {
+    opacity: 0.5;
+    background: #2c3e50;
+}
+
+.scene-object-name {
+    flex: 1;
+    cursor: pointer;
+}
+
+.scene-object-toggle {
+    background: none;
+    border: none;
+    color: #1abc9c;
+    cursor: pointer;
+    font-size: 1.2em;
+    padding: 2px 5px;
+}
+
+.scene-object-toggle:hover {
+    color: #e74c3c;
+}

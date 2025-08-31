@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Ren'Py Visual Scene Builder</title>
+    <link rel="stylesheet" href="/static/visual_builder.css">
+</head>
+<body>
+    <div class="toolbar">
+        <button class="btn btn-primary" onclick="loadScene()">🔄 Load Scene</button>
+        <button class="btn btn-success" onclick="saveScene()">💾 Save Scene</button>
+        <button class="btn btn-primary" onclick="addObject()">➕ Add Object</button>
+        <button class="btn btn-danger" onclick="clearScene()">🗑️ Clear Scene</button>
+        <span style="margin-left: auto;">Visual Scene Builder</span>
+    </div>
+    
+    <div class="builder-container">
+        <div class="sidebar">
+            <div class="asset-browser">
+                <h2>Asset Browser</h2>
+                <div id="assetCategories">
+                    <div class="asset-category">
+                        <h3>Characters</h3>
+                        <div id="characterAssets">Loading...</div>
+                    </div>
+                    <div class="asset-category">
+                        <h3>Backgrounds</h3>
+                        <div id="backgroundAssets">Loading...</div>
+                    </div>
+                    <div class="asset-category">
+                        <h3>Props</h3>
+                        <div id="propAssets">Loading...</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="properties-panel">
+                <h3>Scene Objects</h3>
+                <div id="sceneObjectsList">
+                    <p>Loading scene objects...</p>
+                </div>
+                
+                <h3>Object Properties</h3>
+                <div id="objectProperties">
+                    <p>Select an object to edit properties</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="scene-canvas">
+            <div class="coordinates" id="coordinates">X: 0, Y: 0</div>
+            <div class="grid-toggle" onclick="toggleGrid()">📐 Grid</div>
+            <div class="canvas-container" id="sceneCanvas">
+                <!-- Scene objects will be rendered here -->
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/visual_builder.js"></script>
+</body>
+</html>

@@ -193,16 +193,25 @@ class ArgumentParser(argparse.ArgumentParser):
             '--port', dest='port', type=int, default=8080,
             help="The port number for the HTTP API server (default: 8080).")
 
-        # Debug Adapter Protocol arguments (native DAP)
+        # Unified Debug Server arguments
         self.add_argument(
-            '--native-dap', dest='native_dap', action='store_true', default=False,
-            help="Enable native Debug Adapter Protocol server (no debugpy).")
+            '--debug', dest='debug', action='store_true', default=False,
+            help="Enable unified debug server (DAP + HTTP API + WebSocket with auto port detection).")
 
         self.add_argument(
             '--dap-port', dest='dap_port', type=int, default=8765,
-            help="Port for native DAP server (default: 8765).")
+            help="Preferred port for DAP server (auto-detected if unavailable, default: 8765).")
 
-        # Backwards-compatible flags
+        self.add_argument(
+            '--websocket-port', dest='websocket_port', type=int, default=8081,
+            help="Preferred port for WebSocket server (auto-detected if unavailable, default: 8081).")
+
+        # Legacy flags for backward compatibility (deprecated)
+        self.add_argument(
+            '--native-dap', dest='native_dap', action='store_true', default=False,
+            help="Deprecated: Use --debug instead. Enable native Debug Adapter Protocol server.")
+
+        # Backwards-compatible flags (hidden)
         self.add_argument(
             '--dap', dest='dap', action='store_true', default=False,
             help=argparse.SUPPRESS)
