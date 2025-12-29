@@ -661,6 +661,10 @@ class Context(renpy.object.Object):
 
                     renpy.plog(2, "    before execute {} ({}:{})", type_node_name, node.filename, node.linenumber)
 
+                    # Debugger hook - call pre-statement callbacks
+                    for callback in renpy.config.pre_statement_callbacks:
+                        callback(node)
+
                     node.execute()
 
                     renpy.plog(2, "    after execute {} ({}:{})", type_node_name, node.filename, node.linenumber)
