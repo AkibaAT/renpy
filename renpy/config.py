@@ -552,6 +552,15 @@ longpress_vibrate = 0.1
 # of the statement.
 statement_callbacks = []
 
+# A list of callbacks that are called before each statement executes,
+# with the node about to execute. Used by the debugger to check breakpoints.
+pre_statement_callbacks = []
+
+# Debugger configuration
+debugger_enabled = False
+debugger_port = 5678
+debugger_wait_for_client = False
+
 # A list of file extensions that are blacklisted by autoreload.
 autoreload_blacklist = [".rpyc", ".rpymc", ".rpyb", ".pyc", ".pyo"]
 
