@@ -576,6 +576,16 @@ def main():
         renpy.translation.init_translation()
         log_clock("Init translation")
 
+        # Start the debugger if enabled.
+        if getattr(renpy.game.args, "debug_server", False):
+            from renpy import debugger as renpy_debugger
+            port = getattr(renpy.game.args, "debug_port", 5678)
+            wait = getattr(renpy.game.args, "debug_wait", False)
+            if renpy_debugger.start(port=port, wait_for_client=wait):
+                log_clock("Starting debugger")
+            else:
+                print("Warning: Failed to start debugger server")
+
         # Start things running.
         restart = None
 
