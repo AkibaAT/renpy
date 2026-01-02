@@ -22,10 +22,10 @@
 from __future__ import division, absolute_import, with_statement, print_function, unicode_literals
 from renpy.compat import PY2, basestring, bchr, bord, chr, open, pystr, range, round, str, tobytes, unicode  # *
 
-py_branch_to_version = {}
-
 import sys
 import os
+
+py_branch_to_version = {}
 
 
 class Version(object):
@@ -49,9 +49,11 @@ class Version(object):
         py_branch_to_version[(python, branch)] = self
 
 
-Version("main", 3, "8.6.0", "Real Artists Ship")
+edition: str | None = "Oka'Py"
 
-Version("fix", 3, "8.5.1", "In Good Health")
+Version("development", 3, "8.6.0", "Real Artists Ship")
+Version("fix", 3, "8.5.2", "In Good Health")
+Version("release", 3, "8.5.1", "In Good Health")
 
 
 def make_dict(branch, suffix="00000000", official=False, nightly=False):
@@ -73,7 +75,7 @@ def make_dict(branch, suffix="00000000", official=False, nightly=False):
     """
 
     py = sys.version_info.major
-    version = py_branch_to_version.get((py, branch)) or py_branch_to_version[(py, "main")]
+    version = py_branch_to_version.get((py, branch)) or py_branch_to_version[(py, "development")]
 
     return {
         "version": version.version + "." + str(suffix),
@@ -94,7 +96,7 @@ def get_version():
 
     git_head = os.path.join(os.path.dirname(__file__), "..", ".git", "HEAD")
 
-    branch = "main"
+    branch = "development"
 
     try:
         for l in open(git_head, "r"):
@@ -127,20 +129,18 @@ def generate_vc_version(nightly=False):
 
     try:
         branch = subprocess.check_output(["git", "branch", "--show-current"]).decode("utf-8").strip()
+    except Exception:
+        branch = "development"
 
-        s = (
-            subprocess.check_output([
-                "git",
-                "describe",
-                "--tags",
-                "--dirty",
-            ])
-            .decode("utf-8")
-            .strip()
-        )
-        parts = s.strip().split("-")
-        dirty = "dirty" in parts
+    # Check if working directory is dirty (has uncommitted changes)
+    try:
+        s = subprocess.check_output(["git", "status", "--porcelain"]).decode("utf-8").strip()
+        dirty = bool(s)
+    except Exception:
+        dirty = True
 
+    # Generate version suffix from commit history
+    try:
         commits_per_day = collections.defaultdict(int)
 
         for i in (
@@ -158,11 +158,10 @@ def generate_vc_version(nightly=False):
             vc_version = "{}{:02d}".format(key, commits_per_day[key])
 
     except Exception:
-        branch = "main"
         vc_version = "00000000"
-        official = False
 
-    version_dict = make_dict(branch, suffix=vc_version, official=socket.gethostname() == "eileen", nightly=nightly)
+    official = socket.gethostname() == "eileen" or os.environ.get("OKAPY_OFFICIAL_BUILD") == "true"
+    version_dict = make_dict(branch, suffix=vc_version, official=official, nightly=nightly)
 
     vc_version_fn = os.path.join(os.path.dirname(__file__), "vc_version.py")
 

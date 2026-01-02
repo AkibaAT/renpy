@@ -111,6 +111,9 @@ cache/
 # Updater.
 update.pem
 
+# Signing keys
+launcher/game/okapy_private.pem
+
 # Steam.
 steam_appid.txt
 /steamapi.py

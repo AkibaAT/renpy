@@ -590,7 +590,7 @@ screen about():
                 text _("mikey (ATP Projects)")
 
 
-            text _("\nMade with {a=https://www.renpy.org/}Ren'Py{/a} [renpy.version_only]")
+            text _("\nMade with {a=[renpy.website]}Ren'Py{/a} [renpy.version_display]")
             null height 15
             text _("[renpy.license!t]") size 20
 
