@@ -1,0 +1,31 @@
+{
+  "releases": [
+    {
+      "channel": "Release",
+      "version": "8.6.0.00000100",
+      "pretty_version": "8.6.0",
+      "split_version": [8, 6, 0, 100],
+      "timestamp": 1735689600,
+      "url": "https://github.com/AkibaAT/renpy/releases/download/v8.6.0/",
+      "description": "The stable release of Oka'Py, recommended for production use."
+    },
+    {
+      "channel": "Prerelease",
+      "version": "8.7.0.00000001",
+      "pretty_version": "8.7.0-pre",
+      "split_version": [8, 7, 0, 1],
+      "timestamp": 1735689600,
+      "url": "https://github.com/AkibaAT/renpy/releases/download/v8.7.0-pre/",
+      "description": "A preview of the next version of Oka'Py for testing new features."
+    },
+    {
+      "channel": "Nightly",
+      "version": "8.6.0.99999999",
+      "pretty_version": "8.6.0-nightly",
+      "split_version": [8, 6, 0, 99999999],
+      "timestamp": 1735689600,
+      "url": "https://github.com/AkibaAT/renpy/releases/download/nightly/",
+      "description": "The bleeding edge of Oka'Py development with debugger support."
+    }
+  ]
+}

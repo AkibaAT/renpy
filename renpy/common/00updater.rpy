@@ -55,9 +55,12 @@ init -1500 python in updater:
             f.write(data)
 
     try:
-        import rsa
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        from cryptography.exceptions import InvalidSignature
+        has_crypto = True
     except Exception:
-        rsa = None
+        has_crypto = False
 
     from renpy.exports import fsencode
 
@@ -283,9 +286,14 @@ init -1500 python in updater:
                 if not os.path.isdir(self.updatedir):
                     os.makedirs(self.updatedir)
 
-            if public_key is not None:
+            if public_key is not None and has_crypto:
                 with renpy.open_file(public_key, False) as f:
-                    self.public_key = rsa.PublicKey.load_pkcs1(f.read())
+                    key_data = f.read()
+                    loaded_key = serialization.load_pem_public_key(key_data)
+                    if isinstance(loaded_key, Ed25519PublicKey):
+                        self.public_key = loaded_key
+                    else:
+                        self.public_key = None
             else:
                 self.public_key = None
 
@@ -909,54 +917,28 @@ init -1500 python in updater:
             if not os.path.exists(key):
                 key = os.path.join(config.basedir, "update", "key.pem")
 
-            if os.path.exists(key):
-                require_verified = True
-
-                self.log.write("Verifying with ECDSA.\n")
-
-                try:
-
-                    import ecdsa
-                    verifying_key = ecdsa.VerifyingKey.from_pem(open(key, "rb").read())
-
-                    url = urlparse.urljoin(self.url, "updates.ecdsa")
-                    f = urlopen(url)
-
-                    while True:
-                        signature = f.read(64)
-                        if not signature:
-                            break
-
-                        if verifying_key.verify(signature, updates_json):
-                            verified = True
-
-                    self.log.write("Verified with ECDSA.\n")
-
-                except Exception:
-                    if self.log:
-                        import traceback
-                        traceback.print_exc(None, self.log)
-
-            # Old-style RSA signature.
+            # Ed25519 signature verification
             if self.public_key is not None:
                 require_verified = True
 
-                self.log.write("Verifying with RSA.\n")
+                self.log.write("Verifying with Ed25519.\n")
 
                 try:
+                    import base64
 
                     fn = os.path.join(self.updatedir, "updates.json.sig")
                     urlretrieve(self.url + ".sig", fn)
 
                     with open(fn, "rb") as f:
-                        import codecs
-                        signature = codecs.decode(f.read(), "base64")
+                        signature = base64.b64decode(f.read())
 
-                    rsa.verify(updates_json, signature, self.public_key)
+                    self.public_key.verify(signature, updates_json)
                     verified = True
 
-                    self.log.write("Verified with RSA.\n")
+                    self.log.write("Verified with Ed25519.\n")
 
+                except InvalidSignature:
+                    self.log.write("Ed25519 signature invalid.\n")
                 except Exception:
                     if self.log:
                         import traceback
@@ -1637,7 +1619,7 @@ init -1500 python in updater:
         if getattr(renpy, "mobile", False):
             return False
 
-        if rsa is None:
+        if not has_crypto:
             return False
 
         return not not get_installed_packages(base)

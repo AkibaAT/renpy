@@ -450,7 +450,10 @@ def manifest(url, renpy=False, insecure=False):
         If true, verificaiton is disabled.
     """
 
-    import ecdsa
+    import base64
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    from cryptography.exceptions import InvalidSignature
 
     download(url, "temp:manifest.py")
 
@@ -461,11 +464,18 @@ def manifest(url, renpy=False, insecure=False):
         download(url + ".sig", "temp:manifest.py.sig")
 
         with open(_path("temp:manifest.py.sig"), "rb") as f:
-            sig = f.read()
+            sig = base64.b64decode(f.read())
 
-        key = ecdsa.VerifyingKey.from_pem(_renpy.exports.open_file("renpy_ecdsa_public.pem").read())
+        key_pem = _renpy.exports.open_file("okapy_public.pem").read()
+        key = serialization.load_pem_public_key(key_pem)
 
-        if not key.verify(sig, manifest):
+        if not isinstance(key, Ed25519PublicKey):
+            error(_("Invalid public key type."))
+            return
+
+        try:
+            key.verify(sig, manifest)
+        except InvalidSignature:
             error(_("The manifest signature is not valid."))
             return
 

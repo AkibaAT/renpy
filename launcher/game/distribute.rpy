@@ -722,16 +722,18 @@ fix_dlc("renios", "renios")
             # Rename the executable-like files.
             self.rename()
 
-            # Sign the mac app once on Ren'Py.
+            # Sign the mac app once on Ren'Py (only if Mac was built).
             if self.build["renpy"]:
-                fl = self.file_lists['binary']
-                app, rest = fl.split_by_prefix(self.app)
-                if app:
-                    app = self.sign_app(app, macapp)
-                    fl = FileList.merge([ app, rest ])
-                    self.file_lists['binary'] = fl
-                else:
-                    raise Exception("No mac app found.")
+                macfn = os.path.join(config.renpy_base, py("lib/py{major}-mac-universal/renpy"))
+                if os.path.exists(macfn):
+                    fl = self.file_lists['binary']
+                    app, rest = fl.split_by_prefix(self.app)
+                    if app:
+                        app = self.sign_app(app, macapp)
+                        fl = FileList.merge([ app, rest ])
+                        self.file_lists['binary'] = fl
+                    else:
+                        raise Exception("No mac app found.")
 
             # The time of the update version.
             self.update_version = int(time.time())
@@ -1173,16 +1175,25 @@ fix_dlc("renios", "renios")
                     aarch64fn,
                     True)
 
-            self.add_file(
-                mac,
-                prefix + "mac-universal/" + self.executable_name,
-                os.path.join(config.renpy_base, prefix + "mac-universal/renpy"),
-                True)
+            macfn = os.path.join(config.renpy_base, prefix + "mac-universal/renpy")
+
+            if os.path.exists(macfn):
+
+                self.add_file(
+                    mac,
+                    prefix + "mac-universal/" + self.executable_name,
+                    macfn,
+                    True)
 
         def add_mac_files(self):
             """
             Add mac-specific files to the distro.
             """
+
+            # Skip if Mac binaries weren't built
+            macfn = os.path.join(config.renpy_base, py("lib/py{major}-mac-universal/renpy"))
+            if not os.path.exists(macfn):
+                return
 
             if self.build['renpy']:
                 filelist = "binary"
@@ -1200,7 +1211,7 @@ fix_dlc("renios", "renios")
 
             self.add_file(filelist,
                 contents + "/MacOS/" + self.executable_name,
-                os.path.join(config.renpy_base, py("lib/py{major}-mac-universal/renpy")))
+                macfn)
 
 
             custom_fn = os.path.join(self.project.path, "icon.icns")
@@ -1718,31 +1729,42 @@ fix_dlc("renios", "renios")
             with open(fn, "wb") as f:
                 f.write(update_data)
 
-            # Write the signed file.
-            import ecdsa
+            # Write the signed file using Ed25519.
+            import base64
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-            with open(self.find_update_pem(), "rb") as f:
-                signing_key = ecdsa.SigningKey.from_pem(f.read())
+            with open(self.find_private_key(), "rb") as f:
+                private_key = serialization.load_pem_private_key(f.read(), password=None)
 
-            fn = renpy.fsencode(os.path.join(self.destination, "updates.ecdsa"))
+            if not isinstance(private_key, Ed25519PrivateKey):
+                raise TypeError("Expected Ed25519 private key")
+
+            signature = private_key.sign(update_data)
+
+            fn = renpy.fsencode(os.path.join(self.destination, "updates.json.sig"))
             with open(fn, "wb") as f:
-                f.write(signing_key.sign(update_data))
+                f.write(base64.b64encode(signature))
 
-        def find_update_pem(self):
+        def find_private_key(self):
+            """Find the Ed25519 private key for signing updates."""
             if self.build['renpy']:
-                return os.path.join(config.renpy_base, "update.pem")
+                return os.path.join(config.renpy_base, "..", "keys", "update_private.pem")
             else:
-                return os.path.join(self.project.path, "update.pem")
+                return os.path.join(self.project.path, "update_private.pem")
+
+        def find_public_key(self):
+            """Find the Ed25519 public key for update verification."""
+            if self.build['renpy']:
+                return os.path.join(config.renpy_base, "launcher", "game", "okapy_public.pem")
+            else:
+                return os.path.join(self.project.path, "update_public.pem")
 
         def make_key_pem(self):
-            import ecdsa
-
-            with open(self.find_update_pem(), "rb") as f:
-                signing_key = ecdsa.SigningKey.from_pem(f.read())
-
+            """Copy the public key to temp directory for inclusion in builds."""
+            import shutil
             key_pem = self.temp_filename("key.pem")
-            with open(key_pem, "wb") as f:
-                f.write(signing_key.verifying_key.to_pem())
+            shutil.copy(self.find_public_key(), key_pem)
 
         def dump(self):
             for k, v in sorted(self.file_lists.items()):

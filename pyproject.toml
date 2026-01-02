@@ -9,8 +9,8 @@ dependencies = [
     "six",
     "pefile",
     "requests",
-    "ecdsa",
-    "rsa",
+    "ecdsa",  # Used by savetoken.py for save file signing
+    "cryptography",  # Ed25519 for update/extension signing
     "setuptools",
     "cython",
     "ruff",

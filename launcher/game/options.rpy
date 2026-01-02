@@ -47,11 +47,12 @@ init -1 python hide:
     # This controls the title of the window, when Ren'Py is
     # running in a window.
 
-    config.window_title = u"Ren'Py Launcher"
+    _edition_suffix = " - {} Edition".format(renpy.edition) if renpy.edition else ""
+    config.window_title = u"Ren'Py Launcher" + _edition_suffix
 
     # These control the name and version of the game, that are reported
     # with tracebacks and other debugging logs.
-    config.name = "Ren'Py Launcher"
+    config.name = "Ren'Py Launcher" + _edition_suffix
     config.version = renpy.version().split()[1]
 
     #####################

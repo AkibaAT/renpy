@@ -136,8 +136,11 @@ if not official:
 elif nightly:
     version_only += "+nightly"
 
+edition: str | None = "Oka'Py"
+"The edition name (e.g., 'Oka'Py') or None for upstream Ren'Py."
+
 # A verbose string giving the version.
-version = "Ren'Py " + version_only
+version = "Ren'Py " + version_only + (f" ({edition} Edition)" if edition else "")
 
 # Other versions.
 script_version: int = 5003000
