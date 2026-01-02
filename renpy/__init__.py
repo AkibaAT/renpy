@@ -136,8 +136,17 @@ if not official:
 elif nightly:
     version_only += "+nightly"
 
+edition: str | None = "Oka'Py"
+"The edition name (e.g., 'Oka'Py') or None for upstream Ren'Py."
+
+# The website URL for this edition.
+website: str = "https://okapy.li/" if edition else "https://www.renpy.org/"
+
 # A verbose string giving the version.
-version = "Ren'Py " + version_only
+version = "Ren'Py " + version_only + (f" ({edition} Edition)" if edition else "")
+
+# Display version for "Made with" text - includes edition name.
+version_display = version_only + (f" ({edition} Edition)" if edition else "")
 
 # Other versions.
 script_version: int = 5003000

@@ -25,9 +25,10 @@ init python:
     # It must be None for a release.
     UPDATE_SIMULATE = os.environ.get("RENPY_UPDATE_SIMULATE", None)
 
-    PUBLIC_KEY = "renpy_public.pem"
-
-    CHANNELS_URL = os.environ.get("RENPY_CHANNELS_URL", "https://www.renpy.org/channels.json")
+    PUBLIC_KEY = "okapy_public.pem"
+    CHANNELS_URL = os.environ.get("OKAPY_CHANNELS_URL", "https://updates.okapy.li/channels.json")
+    UPDATE_BASE_URL = os.environ.get("OKAPY_UPDATE_URL", "https://updates.okapy.li")
+    NIGHTLY_BASE_URL = os.environ.get("OKAPY_NIGHTLY_URL", "https://updates.okapy.li/nightly")
 
     version_tuple = renpy.version(tuple=True)
 
@@ -45,7 +46,7 @@ init python:
         Returns True if the DLC is installed, False otherwise.
         """
 
-        dlc_url = "http://update.renpy.org/{}/updates.json".format(".".join(str(i) for i in version_tuple[:-1]))
+        dlc_url = "{}/{}/updates.json".format(UPDATE_BASE_URL, ".".join(str(i) for i in version_tuple[:-1]))
 
         state = updater.get_installed_state()
 
@@ -53,7 +54,7 @@ init python:
             base_name = state.get("sdk", {}).get('base_name', '')
 
             if "+nightly" in base_name:
-                dlc_url = "http://nightly.renpy.org/{}/updates.json".format(base_name[6:])
+                dlc_url = "{}/{}/updates.json".format(NIGHTLY_BASE_URL, base_name[6:])
 
         return renpy.invoke_in_new_context(updater.update, dlc_url, add=[name], public_key=PUBLIC_KEY, simulate=UPDATE_SIMULATE, restart=restart, confirm=False)
 
