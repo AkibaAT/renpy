@@ -1,0 +1,966 @@
+name: Build Oka'Py Engine
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Run nightly at 2 AM UTC
+  workflow_dispatch:
+    inputs:
+      nightly:
+        description: 'Build as nightly'
+        type: boolean
+        default: false
+  push:
+    branches:
+      - release
+      - fix
+    tags:
+      - 'v*'
+
+env:
+  OKAPY_OFFICIAL_BUILD: "true"
+  NOPULL: "1"  # Prevent nightly/git.sh from changing branches
+
+jobs:
+  # ============================================================================
+  # Linux x86_64 (native build)
+  # ============================================================================
+  linux-x86:
+    name: Linux x86_64
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout renpy-build
+      uses: actions/checkout@v4
+      with:
+        repository: AkibaAT/renpy-build
+        path: renpy-build
+        ref: docker
+
+    - name: Checkout renpy
+      uses: actions/checkout@v4
+      with:
+        path: renpy-build/renpy
+        submodules: recursive
+
+    - name: Install dependencies
+      run: ./renpy-build/install-deps.sh
+
+    - name: Cache tars (SDKs)
+      uses: actions/cache@v4
+      with:
+        path: renpy-build/tars
+        key: tars-${{ runner.os }}-${{ runner.arch }}
+        restore-keys: tars-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ccache
+        key: ccache-linux-x86-${{ github.ref_type == 'tag' && 'release' || github.ref_name }}
+        restore-keys: ccache-linux-x86-
+
+    - name: Configure ccache
+      run: |
+        ccache --set-config=max_size=2G
+        ccache --set-config=compression=true
+        ccache --set-config=sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime
+        ccache --zero-stats
+
+    - name: Download Cubism SDK
+      run: |
+        if [ ! -f renpy-build/tars/CubismSdkForNative-5-r.4.1.zip ]; then
+          curl -L -o renpy-build/tars/CubismSdkForNative-5-r.4.1.zip \
+            https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+        fi
+
+    - name: Check if Steamworks SDK exists
+      id: check-steam
+      run: echo "exists=$([[ -f renpy-build/tars/steamworks_sdk_163.zip ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+
+    - name: Checkout Steamworks SDK
+      if: steps.check-steam.outputs.exists != 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: rlabrecque/SteamworksSDK
+        ref: 494c2d680b9e47bbc369496b57568f44ef2f6796
+        path: renpy-build/steam/sdk
+
+    - name: Package Steamworks SDK
+      if: steps.check-steam.outputs.exists != 'true'
+      run: |
+        cd renpy-build/steam && zip -r steamworks_sdk_163.zip sdk
+        mv steamworks_sdk_163.zip ../tars/ && cd .. && rm -rf steam
+
+    - name: Prepare build environment
+      working-directory: renpy-build
+      run: |
+        git config --global --add safe.directory '*'
+        ./prepare.sh
+
+    - name: Build Linux x86_64
+      working-directory: renpy-build
+      run: ./build.sh --platforms linux --archs x86_64
+
+    - name: Package artifacts
+      run: |
+        tar -czvf lib-linux-x86_64.tar.gz -C renpy-build/renpy/lib py3-linux-x86_64
+        # Include shared Python lib (contains sitecustomize.pyc with renpy_build_official)
+        # Use subshell to expand glob in the correct directory
+        (cd renpy-build/renpy/lib && tar -czvf ../../../lib-python.tar.gz python3.*)
+        # Include generated launcher scripts
+        tar -czvf launcher-scripts.tar.gz -C renpy-build/renpy renpy.sh renpy3.sh
+
+    - name: Upload lib artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: lib-linux-x86_64
+        path: lib-linux-x86_64.tar.gz
+        retention-days: 1
+
+    - name: Upload shared Python lib
+      uses: actions/upload-artifact@v4
+      with:
+        name: lib-python
+        path: lib-python.tar.gz
+        retention-days: 1
+
+    - name: Upload launcher scripts
+      uses: actions/upload-artifact@v4
+      with:
+        name: launcher-scripts
+        path: launcher-scripts.tar.gz
+        retention-days: 1
+
+  # ============================================================================
+  # Linux ARM64 (native build)
+  # ============================================================================
+  linux-arm:
+    name: Linux ARM64
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+    - name: Checkout renpy-build
+      uses: actions/checkout@v4
+      with:
+        repository: AkibaAT/renpy-build
+        path: renpy-build
+        ref: docker
+
+    - name: Checkout renpy
+      uses: actions/checkout@v4
+      with:
+        path: renpy-build/renpy
+        submodules: recursive
+
+    - name: Install dependencies
+      run: ./renpy-build/install-deps.sh
+
+    - name: Cache tars (SDKs)
+      uses: actions/cache@v4
+      with:
+        path: renpy-build/tars
+        key: tars-${{ runner.os }}-${{ runner.arch }}
+        restore-keys: tars-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ccache
+        key: ccache-linux-arm-${{ github.ref_type == 'tag' && 'release' || github.ref_name }}
+        restore-keys: ccache-linux-arm-
+
+    - name: Configure ccache
+      run: |
+        ccache --set-config=max_size=2G
+        ccache --set-config=compression=true
+        ccache --set-config=sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime
+        ccache --zero-stats
+
+    - name: Download Cubism SDK
+      run: |
+        if [ ! -f renpy-build/tars/CubismSdkForNative-5-r.4.1.zip ]; then
+          curl -L -o renpy-build/tars/CubismSdkForNative-5-r.4.1.zip \
+            https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+        fi
+
+    - name: Check if Steamworks SDK exists
+      id: check-steam
+      run: echo "exists=$([[ -f renpy-build/tars/steamworks_sdk_163.zip ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+
+    - name: Checkout Steamworks SDK
+      if: steps.check-steam.outputs.exists != 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: rlabrecque/SteamworksSDK
+        ref: 494c2d680b9e47bbc369496b57568f44ef2f6796
+        path: renpy-build/steam/sdk
+
+    - name: Package Steamworks SDK
+      if: steps.check-steam.outputs.exists != 'true'
+      run: |
+        cd renpy-build/steam && zip -r steamworks_sdk_163.zip sdk
+        mv steamworks_sdk_163.zip ../tars/ && cd .. && rm -rf steam
+
+    - name: Prepare build environment
+      working-directory: renpy-build
+      run: |
+        git config --global --add safe.directory '*'
+        ./prepare.sh
+
+    - name: Build Linux ARM64
+      working-directory: renpy-build
+      run: ./build.sh --platforms linux --archs aarch64
+
+    - name: Package artifacts
+      run: tar -czvf lib-linux-aarch64.tar.gz -C renpy-build/renpy/lib py3-linux-aarch64
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: lib-linux-aarch64
+        path: lib-linux-aarch64.tar.gz
+        retention-days: 1
+
+  # ============================================================================
+  # Windows x86_64 (cross-compile)
+  # ============================================================================
+  windows:
+    name: Windows x86_64
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout renpy-build
+      uses: actions/checkout@v4
+      with:
+        repository: AkibaAT/renpy-build
+        path: renpy-build
+        ref: docker
+
+    - name: Checkout renpy
+      uses: actions/checkout@v4
+      with:
+        path: renpy-build/renpy
+        submodules: recursive
+
+    - name: Install dependencies
+      run: ./renpy-build/install-deps.sh
+
+    - name: Cache tars (SDKs)
+      uses: actions/cache@v4
+      with:
+        path: renpy-build/tars
+        key: tars-${{ runner.os }}-${{ runner.arch }}
+        restore-keys: tars-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ccache
+        key: ccache-windows-${{ github.ref_type == 'tag' && 'release' || github.ref_name }}
+        restore-keys: ccache-windows-
+
+    - name: Configure ccache
+      run: |
+        ccache --set-config=max_size=2G
+        ccache --set-config=compression=true
+        ccache --set-config=sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime
+        ccache --zero-stats
+
+    - name: Cache Windows sysroot
+      uses: actions/cache@v4
+      with:
+        path: renpy-build/tmp/cross.windows-x86_64
+        key: windows-sysroot-${{ github.ref_type == 'tag' && 'release' || github.ref_name }}
+        restore-keys: windows-sysroot-
+
+    - name: Download Cubism SDK
+      run: |
+        if [ ! -f renpy-build/tars/CubismSdkForNative-5-r.4.1.zip ]; then
+          curl -L -o renpy-build/tars/CubismSdkForNative-5-r.4.1.zip \
+            https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+        fi
+
+    - name: Check if Steamworks SDK exists
+      id: check-steam
+      run: echo "exists=$([[ -f renpy-build/tars/steamworks_sdk_163.zip ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+
+    - name: Checkout Steamworks SDK
+      if: steps.check-steam.outputs.exists != 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: rlabrecque/SteamworksSDK
+        ref: 494c2d680b9e47bbc369496b57568f44ef2f6796
+        path: renpy-build/steam/sdk
+
+    - name: Package Steamworks SDK
+      if: steps.check-steam.outputs.exists != 'true'
+      run: |
+        cd renpy-build/steam && zip -r steamworks_sdk_163.zip sdk
+        mv steamworks_sdk_163.zip ../tars/ && cd .. && rm -rf steam
+
+    - name: Prepare build environment
+      working-directory: renpy-build
+      run: |
+        git config --global --add safe.directory '*'
+        ./prepare.sh
+
+    - name: Build Windows
+      working-directory: renpy-build
+      run: ./build.sh --platforms windows --archs x86_64
+
+    - name: Package artifacts
+      run: |
+        tar -czvf lib-windows-x86_64.tar.gz -C renpy-build/renpy/lib py3-windows-x86_64
+        cp renpy-build/renpy/7z.sfx 7z.sfx
+
+    - name: Upload lib artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: lib-windows-x86_64
+        path: lib-windows-x86_64.tar.gz
+        retention-days: 1
+
+    - name: Upload 7z.sfx
+      uses: actions/upload-artifact@v4
+      with:
+        name: 7z-sfx
+        path: 7z.sfx
+        retention-days: 1
+
+  # ============================================================================
+  # Web (Emscripten/WASM)
+  # ============================================================================
+  web:
+    name: Web
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout renpy-build
+      uses: actions/checkout@v4
+      with:
+        repository: AkibaAT/renpy-build
+        path: renpy-build
+        ref: docker
+
+    - name: Checkout renpy
+      uses: actions/checkout@v4
+      with:
+        path: renpy-build/renpy
+        submodules: recursive
+
+    - name: Install dependencies
+      run: ./renpy-build/install-deps.sh
+
+    - name: Cache tars (SDKs)
+      uses: actions/cache@v4
+      with:
+        path: renpy-build/tars
+        key: tars-${{ runner.os }}-${{ runner.arch }}
+        restore-keys: tars-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ccache
+        key: ccache-web-${{ github.ref_type == 'tag' && 'release' || github.ref_name }}
+        restore-keys: ccache-web-
+
+    - name: Configure ccache
+      run: |
+        ccache --set-config=max_size=2G
+        ccache --set-config=compression=true
+        ccache --set-config=sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime
+        ccache --zero-stats
+
+    - name: Cache Emscripten
+      uses: actions/cache@v4
+      with:
+        path: renpy-build/tmp/cross.web-wasm/upstream/emscripten/cache
+        key: emscripten-${{ github.ref_type == 'tag' && 'release' || github.ref_name }}
+        restore-keys: emscripten-
+
+    - name: Download Cubism SDK
+      run: |
+        if [ ! -f renpy-build/tars/CubismSdkForNative-5-r.4.1.zip ]; then
+          curl -L -o renpy-build/tars/CubismSdkForNative-5-r.4.1.zip \
+            https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+        fi
+
+    - name: Prepare build environment
+      working-directory: renpy-build
+      run: |
+        git config --global --add safe.directory '*'
+        ./prepare.sh
+
+    - name: Build Web
+      working-directory: renpy-build
+      run: ./build.sh --platforms web --archs wasm
+
+    - name: Package artifacts
+      run: tar -czvf web.tar.gz -C renpy-build/renpy web3
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: web
+        path: web.tar.gz
+        retention-days: 1
+
+  # ============================================================================
+  # Android (all architectures)
+  # Note: Android NDK only provides x86_64 Linux binaries
+  # ============================================================================
+  android:
+    name: Android
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout renpy-build
+      uses: actions/checkout@v4
+      with:
+        repository: AkibaAT/renpy-build
+        path: renpy-build
+        ref: docker
+
+    - name: Checkout renpy
+      uses: actions/checkout@v4
+      with:
+        path: renpy-build/renpy
+        submodules: recursive
+
+    - name: Install dependencies
+      run: ./renpy-build/install-deps.sh
+
+    - name: Cache tars (SDKs)
+      uses: actions/cache@v4
+      with:
+        path: renpy-build/tars
+        key: tars-${{ runner.os }}-${{ runner.arch }}
+        restore-keys: tars-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ccache
+        key: ccache-android-${{ github.ref_type == 'tag' && 'release' || github.ref_name }}
+        restore-keys: ccache-android-
+
+    - name: Configure ccache
+      run: |
+        ccache --set-config=max_size=2G
+        ccache --set-config=compression=true
+        ccache --set-config=sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime
+        ccache --zero-stats
+
+    - name: Cache Android sysroot
+      uses: actions/cache@v4
+      with:
+        path: |
+          renpy-build/tmp/cross.android-arm64_v8a
+          renpy-build/tmp/cross.android-x86_64
+        key: android-sysroot-${{ github.ref_type == 'tag' && 'release' || github.ref_name }}
+        restore-keys: android-sysroot-
+
+    - name: Download Android NDK
+      run: |
+        if [ ! -f renpy-build/tars/android-ndk-r29-linux.zip ]; then
+          curl -L -o renpy-build/tars/android-ndk-r29-linux.zip \
+            https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+        fi
+
+    - name: Download Cubism SDK
+      run: |
+        if [ ! -f renpy-build/tars/CubismSdkForNative-5-r.4.1.zip ]; then
+          curl -L -o renpy-build/tars/CubismSdkForNative-5-r.4.1.zip \
+            https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+        fi
+
+    - name: Prepare build environment
+      working-directory: renpy-build
+      run: |
+        git config --global --add safe.directory '*'
+        ./prepare.sh
+
+    - name: Build Android
+      working-directory: renpy-build
+      run: ./build.sh --platforms android
+
+    - name: Package artifacts
+      run: tar -czvf rapt.tar.gz -C renpy-build/renpy rapt3
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rapt
+        path: rapt.tar.gz
+        retention-days: 1
+
+  # ============================================================================
+  # macOS (cross-compile from Linux ARM64)
+  # ============================================================================
+  macos:
+    name: macOS
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+    - name: Checkout renpy-build
+      uses: actions/checkout@v4
+      with:
+        repository: AkibaAT/renpy-build
+        path: renpy-build
+        ref: docker
+
+    - name: Checkout renpy
+      uses: actions/checkout@v4
+      with:
+        path: renpy-build/renpy
+        submodules: recursive
+
+    - name: Install dependencies
+      run: ./renpy-build/install-deps.sh
+
+    - name: Cache tars (SDKs)
+      uses: actions/cache@v4
+      with:
+        path: renpy-build/tars
+        key: tars-${{ runner.os }}-${{ runner.arch }}
+        restore-keys: tars-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ccache
+        key: ccache-macos-${{ github.ref_type == 'tag' && 'release' || github.ref_name }}
+        restore-keys: ccache-macos-
+
+    - name: Configure ccache
+      run: |
+        ccache --set-config=max_size=2G
+        ccache --set-config=compression=true
+        ccache --set-config=sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime
+        ccache --zero-stats
+
+    - name: Cache macOS sysroot
+      uses: actions/cache@v4
+      with:
+        path: |
+          renpy-build/tmp/cross.mac-x86_64
+          renpy-build/tmp/cross.mac-arm64
+        key: macos-sysroot-${{ github.ref_type == 'tag' && 'release' || github.ref_name }}
+        restore-keys: macos-sysroot-
+
+    - name: Install 1Password CLI
+      uses: 1password/install-cli-action@v1
+
+    - name: Download macOS SDK from 1Password
+      run: |
+        mkdir -p renpy-build/tars
+        op read "op://renpy/MacOSX12.3.sdk.tar/MacOSX12.3.sdk.tar.bz2" --out-file renpy-build/tars/MacOSX12.3.sdk.tar.bz2
+      env:
+        OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
+    - name: Download Cubism SDK
+      run: |
+        if [ ! -f renpy-build/tars/CubismSdkForNative-5-r.4.1.zip ]; then
+          curl -L -o renpy-build/tars/CubismSdkForNative-5-r.4.1.zip \
+            https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+        fi
+
+    - name: Check if Steamworks SDK exists
+      id: check-steam
+      run: echo "exists=$([[ -f renpy-build/tars/steamworks_sdk_163.zip ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+
+    - name: Checkout Steamworks SDK
+      if: steps.check-steam.outputs.exists != 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: rlabrecque/SteamworksSDK
+        ref: 494c2d680b9e47bbc369496b57568f44ef2f6796
+        path: renpy-build/steam/sdk
+
+    - name: Package Steamworks SDK
+      if: steps.check-steam.outputs.exists != 'true'
+      run: |
+        cd renpy-build/steam && zip -r steamworks_sdk_163.zip sdk
+        mv steamworks_sdk_163.zip ../tars/ && cd .. && rm -rf steam
+
+    - name: Prepare build environment
+      working-directory: renpy-build
+      run: |
+        git config --global --add safe.directory '*'
+        ./prepare.sh
+
+    - name: Build macOS
+      working-directory: renpy-build
+      run: ./build.sh --platforms mac
+
+    - name: Package artifacts
+      run: tar -czvf lib-mac-universal.tar.gz -C renpy-build/renpy/lib py3-mac-universal
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: lib-mac-universal
+        path: lib-mac-universal.tar.gz
+        retention-days: 1
+
+  # ============================================================================
+  # iOS (cross-compile from Linux ARM64)
+  # ============================================================================
+  ios:
+    name: iOS
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+    - name: Checkout renpy-build
+      uses: actions/checkout@v4
+      with:
+        repository: AkibaAT/renpy-build
+        path: renpy-build
+        ref: docker
+
+    - name: Checkout renpy
+      uses: actions/checkout@v4
+      with:
+        path: renpy-build/renpy
+        submodules: recursive
+
+    - name: Install dependencies
+      run: ./renpy-build/install-deps.sh
+
+    - name: Cache tars (SDKs)
+      uses: actions/cache@v4
+      with:
+        path: renpy-build/tars
+        key: tars-${{ runner.os }}-${{ runner.arch }}
+        restore-keys: tars-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ccache
+        key: ccache-ios-${{ github.ref_type == 'tag' && 'release' || github.ref_name }}
+        restore-keys: ccache-ios-
+
+    - name: Configure ccache
+      run: |
+        ccache --set-config=max_size=2G
+        ccache --set-config=compression=true
+        ccache --set-config=sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime
+        ccache --zero-stats
+
+    - name: Cache iOS sysroot
+      uses: actions/cache@v4
+      with:
+        path: |
+          renpy-build/tmp/cross.ios-arm64
+          renpy-build/tmp/cross.ios-sim-arm64
+          renpy-build/tmp/cross.ios-sim-x86_64
+        key: ios-sysroot-${{ github.ref_type == 'tag' && 'release' || github.ref_name }}
+        restore-keys: ios-sysroot-
+
+    - name: Install 1Password CLI
+      uses: 1password/install-cli-action@v1
+
+    - name: Download iOS SDKs from 1Password
+      run: |
+        mkdir -p renpy-build/tars
+        op read "op://renpy/iPhoneOS14.0.sdk.tar/iPhoneOS14.0.sdk.tar.gz" --out-file renpy-build/tars/iPhoneOS14.0.sdk.tar.gz
+        op read "op://renpy/iPhoneSimulator14.0.sdk.tar/iPhoneSimulator14.0.sdk.tar.gz" --out-file renpy-build/tars/iPhoneSimulator14.0.sdk.tar.gz
+      env:
+        OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
+    - name: Download Cubism SDK
+      run: |
+        if [ ! -f renpy-build/tars/CubismSdkForNative-5-r.4.1.zip ]; then
+          curl -L -o renpy-build/tars/CubismSdkForNative-5-r.4.1.zip \
+            https://cubism.live2d.com/sdk-native/bin/CubismSdkForNative-5-r.4.1.zip
+        fi
+
+    - name: Prepare build environment
+      working-directory: renpy-build
+      run: |
+        git config --global --add safe.directory '*'
+        ./prepare.sh
+
+    - name: Build iOS
+      working-directory: renpy-build
+      run: ./build.sh --platforms ios
+
+    - name: Package artifacts
+      run: tar -czvf renios.tar.gz -C renpy-build/renpy renios3
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: renios
+        path: renios.tar.gz
+        retention-days: 1
+
+  # ============================================================================
+  # Create Release
+  # ============================================================================
+  release:
+    name: Create Release
+    runs-on: ubuntu-24.04
+    needs: [linux-x86, linux-arm, windows, web, android, macos, ios]
+
+    steps:
+    - name: Checkout renpy-build
+      uses: actions/checkout@v4
+      with:
+        repository: AkibaAT/renpy-build
+        path: renpy-build
+        ref: docker
+
+    - name: Checkout renpy
+      uses: actions/checkout@v4
+      with:
+        path: renpy-build/renpy
+        submodules: recursive
+        fetch-depth: 100  # Need commit history for version generation (YYMMDDCC)
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Restore lib directories
+      run: |
+        mkdir -p renpy-build/renpy/lib
+        tar -xzvf artifacts/lib-linux-x86_64/lib-linux-x86_64.tar.gz -C renpy-build/renpy/lib
+        tar -xzvf artifacts/lib-linux-aarch64/lib-linux-aarch64.tar.gz -C renpy-build/renpy/lib
+        tar -xzvf artifacts/lib-windows-x86_64/lib-windows-x86_64.tar.gz -C renpy-build/renpy/lib
+        tar -xzvf artifacts/lib-mac-universal/lib-mac-universal.tar.gz -C renpy-build/renpy/lib
+        # Restore shared Python lib (contains sitecustomize.pyc with renpy_build_official)
+        tar -xzvf artifacts/lib-python/lib-python.tar.gz -C renpy-build/renpy/lib
+        tar -xzvf artifacts/web/web.tar.gz -C renpy-build/renpy
+        tar -xzvf artifacts/rapt/rapt.tar.gz -C renpy-build/renpy
+        tar -xzvf artifacts/renios/renios.tar.gz -C renpy-build/renpy
+
+    - name: Create symlinks and restore build artifacts
+      working-directory: renpy-build/renpy
+      run: |
+        ln -sf web3 web
+        ln -sf rapt3 rapt
+        ln -sf renios3 renios
+        # Extract launcher scripts generated by build
+        tar -xzvf ../../artifacts/launcher-scripts/launcher-scripts.tar.gz
+        # Copy 7z.sfx for Windows self-extracting installer
+        cp ../../artifacts/7z-sfx/7z.sfx 7z.sfx
+
+    - name: Install 1Password CLI
+      uses: 1password/install-cli-action@v1
+
+    - name: Download signing key from 1Password
+      run: |
+        # ECDSA private key for signing updates (update.pem)
+        op read "op://renpy/update.pem/update.pem" --out-file renpy-build/renpy/update.pem
+      env:
+        OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
+    - name: Generate public key for extension verification
+      working-directory: renpy-build/renpy
+      run: |
+        ./lib/py3-linux-x86_64/python -c "
+        import ecdsa
+        with open('update.pem', 'rb') as f:
+            sk = ecdsa.SigningKey.from_pem(f.read())
+        with open('launcher/game/public_key.pem', 'wb') as f:
+            f.write(sk.verifying_key.to_pem())
+        "
+
+    - name: Determine if nightly build
+      id: build_type
+      run: |
+        if [[ "${{ github.event_name }}" == "schedule" ]] || [[ "${{ github.event.inputs.nightly }}" == "true" ]]; then
+          echo "is_nightly=true" >> $GITHUB_OUTPUT
+          echo "nightly_flag=--nightly" >> $GITHUB_OUTPUT
+        else
+          echo "is_nightly=false" >> $GITHUB_OUTPUT
+          echo "nightly_flag=" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Generate version
+      working-directory: renpy-build/renpy
+      run: python3 -m renpy.versions ${{ steps.build_type.outputs.nightly_flag }}
+
+    - name: Create SDK distribution
+      working-directory: renpy-build/renpy
+      run: ./lib/py3-linux-x86_64/python distribute.py --nosign ${{ steps.build_type.outputs.nightly_flag }}
+
+    - name: Clean up signing key
+      run: rm -f renpy-build/renpy/update.pem
+
+    - name: Determine release info
+      id: release_info
+      working-directory: renpy-build/renpy
+      run: |
+        # Read version from generated vc_version.py
+        VERSION=$(grep "^version = " renpy/vc_version.py | cut -d"'" -f2)
+        BRANCH=$(grep "^branch = " renpy/vc_version.py | cut -d"'" -f2)
+
+        # Determine release strategy based on branch and build type
+        # - development: no release
+        # - nightly (scheduled or manual): update nightly release
+        # - fix: numbered prerelease
+        # - release: numbered stable release
+        # - tag: skip (already released)
+
+        IS_NIGHTLY="${{ steps.build_type.outputs.is_nightly }}"
+
+        if [[ "$IS_NIGHTLY" == "true" ]]; then
+          echo "should_release=true" >> $GITHUB_OUTPUT
+          echo "release_tag=nightly" >> $GITHUB_OUTPUT
+          echo "release_title=Oka'Py Nightly Build" >> $GITHUB_OUTPUT
+          echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          echo "is_nightly=true" >> $GITHUB_OUTPUT
+        elif [[ "$BRANCH" == "development" ]]; then
+          echo "should_release=false" >> $GITHUB_OUTPUT
+        elif [[ "$BRANCH" == "fix" ]]; then
+          echo "should_release=true" >> $GITHUB_OUTPUT
+          echo "release_tag=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "release_title=Oka'Py ${VERSION}" >> $GITHUB_OUTPUT
+          echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          echo "is_nightly=false" >> $GITHUB_OUTPUT
+        elif [[ "$BRANCH" == "release" ]]; then
+          echo "should_release=true" >> $GITHUB_OUTPUT
+          echo "release_tag=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "release_title=Oka'Py ${VERSION}" >> $GITHUB_OUTPUT
+          echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          echo "is_nightly=false" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+          # Tag push - skip release creation (tag already exists)
+          echo "should_release=false" >> $GITHUB_OUTPUT
+        else
+          # Unknown branch - no release
+          echo "should_release=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Upload release
+      if: steps.release_info.outputs.should_release == 'true'
+      working-directory: renpy-build/renpy
+      run: |
+        RELEASE_TAG="${{ steps.release_info.outputs.release_tag }}"
+        RELEASE_TITLE="${{ steps.release_info.outputs.release_title }}"
+        IS_PRERELEASE="${{ steps.release_info.outputs.is_prerelease }}"
+        IS_NIGHTLY="${{ steps.release_info.outputs.is_nightly }}"
+
+        # For nightly, delete existing release first (errors expected if no previous release)
+        if [ "$IS_NIGHTLY" == "true" ]; then
+          gh release delete "$RELEASE_TAG" --yes 2>/dev/null || true
+          git push --delete origin "$RELEASE_TAG" 2>/dev/null || true
+        fi
+
+        # Create release
+        if [ "$IS_PRERELEASE" == "true" ]; then
+          gh release create "$RELEASE_TAG" --title "$RELEASE_TITLE" --notes "Automated build from commit ${{ github.sha }}" --prerelease --target "${{ github.sha }}"
+        else
+          gh release create "$RELEASE_TAG" --title "$RELEASE_TITLE" --notes "Oka'Py release" --target "${{ github.sha }}"
+        fi
+
+        # Upload all archive files
+        gh release upload "$RELEASE_TAG" dl/*/*.zip dl/*/*.tar.bz2 dl/*/*.7z.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Deploy to update server
+      run: |
+        set +x  # Disable command echoing to prevent secrets from appearing in logs
+
+        # Get deploy credentials from 1Password
+        mkdir -p ~/.ssh
+        op read "op://renpy/okapy_deploy/private_key" --force --out-file ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+
+        DEPLOY_HOST=$(op read "op://renpy/okapy_deploy/host")
+        DEPLOY_PATH=$(op read "op://renpy/okapy_deploy/path")
+        DEPLOY_URL="https://updates.okapy.li"
+
+        # Mask sensitive values from logs
+        echo "::add-mask::$DEPLOY_HOST"
+        echo "::add-mask::$DEPLOY_PATH"
+
+        # Add host to known_hosts
+        ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+        # Get version info
+        VERSION_DIR=$(ls renpy-build/renpy/dl/)
+        VERSION=$(cat renpy-build/renpy/renpy/vc_version.py | grep "^version" | cut -d"'" -f2)
+
+        # Determine channel based on branch
+        BRANCH="${{ github.ref_name }}"
+        if [[ "${{ steps.build_type.outputs.is_nightly }}" == "true" ]]; then
+          CHANNEL="Nightly"
+          # For nightly, use a fixed directory name
+          DEPLOY_DIR="nightly"
+        elif [[ "$BRANCH" == "release" ]]; then
+          CHANNEL="Release"
+          DEPLOY_DIR="$VERSION_DIR"
+        elif [[ "$BRANCH" == "fix" ]]; then
+          CHANNEL="Prerelease"
+          DEPLOY_DIR="$VERSION_DIR"
+        else
+          CHANNEL="Nightly"
+          DEPLOY_DIR="nightly"
+        fi
+
+        # Parse version into array for split_version
+        IFS='.' read -ra VERSION_PARTS <<< "${VERSION%%+*}"
+        SPLIT_VERSION="[${VERSION_PARTS[0]:-0}, ${VERSION_PARTS[1]:-0}, ${VERSION_PARTS[2]:-0}, ${VERSION_PARTS[3]:-0}]"
+
+        # Deploy files using rsync
+        rsync -avz --delete \
+          -e "ssh -i ~/.ssh/deploy_key" \
+          "renpy-build/renpy/dl/${VERSION_DIR}/" \
+          "okapy-deploy@${DEPLOY_HOST}:${DEPLOY_PATH}/${DEPLOY_DIR}/"
+
+        # Update channels.json
+        CHANNELS_FILE="/tmp/channels.json"
+
+        # Fetch existing channels.json or create empty one
+        ssh -i ~/.ssh/deploy_key "okapy-deploy@${DEPLOY_HOST}" \
+          "cat ${DEPLOY_PATH}/channels.json 2>/dev/null" > "$CHANNELS_FILE" || echo '{"releases":[]}' > "$CHANNELS_FILE"
+
+        # Get timestamp and pretty version
+        TIMESTAMP=$(date +%s)
+        PRETTY_VERSION="Oka'Py $VERSION"
+
+        # Set description based on channel
+        if [[ "$CHANNEL" == "Release" ]]; then
+          DESCRIPTION="The latest stable release of Oka'Py."
+        elif [[ "$CHANNEL" == "Prerelease" ]]; then
+          DESCRIPTION="A prerelease version with upcoming fixes."
+        else
+          DESCRIPTION="The latest nightly build with newest features."
+        fi
+
+        # Update the channel entry using jq
+        UPDATED=$(jq --arg channel "$CHANNEL" \
+                     --arg version "$VERSION" \
+                     --argjson split_version "$SPLIT_VERSION" \
+                     --arg url "${DEPLOY_URL}/${DEPLOY_DIR}/updates.json" \
+                     --argjson timestamp "$TIMESTAMP" \
+                     --arg pretty_version "$PRETTY_VERSION" \
+                     --arg description "$DESCRIPTION" \
+          '.releases = [.releases[] | select(.channel != $channel)] + [{
+            "channel": $channel,
+            "version": $version,
+            "split_version": $split_version,
+            "url": $url,
+            "timestamp": $timestamp,
+            "pretty_version": $pretty_version,
+            "description": $description
+          }] | .releases |= sort_by(if .channel == "Release" then 0 elif .channel == "Prerelease" then 1 else 2 end)' \
+          "$CHANNELS_FILE")
+
+        echo "$UPDATED" > "$CHANNELS_FILE"
+
+        # Upload updated channels.json
+        scp -i ~/.ssh/deploy_key "$CHANNELS_FILE" \
+          "okapy-deploy@${DEPLOY_HOST}:${DEPLOY_PATH}/channels.json"
+
+        # Clean up
+        rm -f ~/.ssh/deploy_key "$CHANNELS_FILE"
+      env:
+        OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
