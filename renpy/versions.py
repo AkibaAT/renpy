@@ -21,6 +21,7 @@
 
 from typing import TypedDict
 
+import os
 import site
 import socket
 import pathlib
@@ -51,8 +52,9 @@ class Version:
 branch_to_version: dict[str, Version] = {}
 
 Version("main", (8, 6, 0), "Real Artists Ship")
-
+Version("development", (8, 6, 0), "Real Artists Ship")
 Version("fix", (8, 5, 3), "In Good Health")
+Version("release", (8, 5, 2), "In Good Health")
 
 
 class VersionDict(TypedDict):
@@ -176,7 +178,8 @@ def get_git_version(nightly: bool = False) -> VersionDict:
         version_obj = branch_to_version["main"]
 
     semver = (*version_obj.semver, commit)
-    official = socket.gethostname() == "eileen"
+    # Oka'Py: Allow official builds via environment variable
+    official = socket.gethostname() == "eileen" or os.environ.get("OKAPY_OFFICIAL_BUILD") == "true"
 
     return VersionDict(
         semver=semver,

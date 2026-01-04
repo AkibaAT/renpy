@@ -91,7 +91,7 @@ class DAPServer:
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self._socket.bind(("127.0.0.1", self.port))
-            self._socket.listen(1)
+            self._socket.listen(5)  # Allow pending connections to queue
             self._socket.settimeout(1.0)
 
             self._running = True

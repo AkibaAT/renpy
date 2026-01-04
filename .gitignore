@@ -84,6 +84,7 @@ cache/
 /gui/game/gui
 
 # Editors.
+/.idea
 /jedit
 /atom
 /vscode
@@ -109,6 +110,10 @@ cache/
 
 # Updater.
 update.pem
+
+# Signing keys
+launcher/game/okapy_private.pem
+launcher/game/public_key.pem
 
 # Steam.
 steam_appid.txt
