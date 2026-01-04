@@ -111,6 +111,32 @@ class DebuggerCore:
 
         self._shutdown_requested = False
 
+        # PERFORMANCE: Cached activity flags to minimize per-statement checks
+        # These are updated when state changes, not checked on every statement
+        self._has_line_breakpoints = False  # Cached from breakpoint_manager
+        self._has_func_breakpoints = False  # Cached from _function_breakpoints
+        self._activity_level = 0  # Bitmask: 0=none, 1=breakpoints, 2=stepping, 4=pending ops
+
+    def _update_activity_level(self) -> None:
+        """
+        Update cached activity flags. Call this when state changes.
+        PERFORMANCE: Consolidates checks so the hot path only reads cached values.
+        """
+        self._has_line_breakpoints = self.breakpoint_manager.has_breakpoints()
+        self._has_func_breakpoints = bool(self._function_breakpoints)
+
+        # Build activity bitmask
+        level = 0
+        if self._has_line_breakpoints or self._has_func_breakpoints:
+            level |= 1  # Has breakpoints
+        if self.step_mode != StepMode.NONE:
+            level |= 2  # Is stepping
+        if self._pending_jump is not None or self._pending_rollback or self._pause_after_jump:
+            level |= 4  # Has pending operations
+        if self._trace_requested:
+            level |= 8  # Trace requested
+        self._activity_level = level
+
     def attach(self, dap_server: DAPServer) -> None:
         """
         Attach the debugger and start listening for events.
@@ -126,6 +152,8 @@ class DebuggerCore:
                 self._register_hooks()
                 self._hook_registered = True
 
+        self._update_activity_level()  # Initialize activity state
+
     def detach(self) -> None:
         """
         Detach the debugger.
@@ -138,6 +166,7 @@ class DebuggerCore:
             self.step_mode = StepMode.NONE
             self._pause_event.set()
             self._disable_trace()
+            self._activity_level = 0  # Fast path: no activity when disconnected
 
     def shutdown(self) -> None:
         """
@@ -198,6 +227,9 @@ class DebuggerCore:
 
         # Clear tracked show/scene statements as they may be stale
         self._show_statement_locations.clear()
+
+        # Update activity level after reload
+        self._update_activity_level()
 
     def _register_hooks(self) -> None:
         """Register debugger hooks with Ren'Py."""
@@ -353,54 +385,90 @@ class DebuggerCore:
         Hook called before each Ren'Py statement executes.
 
         This is registered as a pre_statement_callback.
+        PERFORMANCE CRITICAL: This runs on every statement, keep it fast!
         """
-        # Exit immediately if shutdown is in progress
+        # Ultra-fast path: check cached activity level first (single int comparison)
+        # Activity level 0 means: no breakpoints, no stepping, no pending ops, no trace
+        activity = self._activity_level
+        if activity == 0:
+            # Also verify we're not shutdown/disconnected (rare state changes)
+            if not self._shutdown_requested and self.state != DebuggerState.DISCONNECTED:
+                return
+            return
+
+        # Fast path exits
         if self._shutdown_requested:
             return
 
         if self.state == DebuggerState.DISCONNECTED:
             return
 
-        if self._trace_requested and not self._trace_enabled:
+        # Handle trace request (bit 8)
+        if activity & 8 and not self._trace_enabled:
             self._enable_trace_in_main_thread()
 
-        self._check_pending_jump()
-        self._check_pending_rollback()
+        # Handle pending operations (bit 4)
+        if activity & 4:
+            if self._pending_jump is not None:
+                self._check_pending_jump()
+            if self._pending_rollback:
+                self._check_pending_rollback()
+                self._update_activity_level()  # Clear pending flag
+
+        # Get node location - use direct attribute access with try/except (faster than getattr for hot path)
+        try:
+            filename = node.filename
+        except AttributeError:
+            filename = None
+        try:
+            line = node.linenumber
+        except AttributeError:
+            line = 0
 
         self._current_node = node
-        self._current_filename = getattr(node, "filename", None)
-        self._current_line = getattr(node, "linenumber", 0)
+        self._current_filename = filename
+        self._current_line = line
 
-        self._track_show_statement(node)
+        # Only track show/scene statements (check class name)
+        # Use __class__.__name__ directly (slightly faster than type())
+        node_class = node.__class__.__name__
+        if node_class in ('Show', 'Scene', 'ShowScreen', 'HideScreen'):
+            self._track_show_statement(node)
 
         if self._pause_after_jump:
             self._pause_after_jump = False
+            self._update_activity_level()
             self._disable_skip_mode()
             self._pause("goto")
             return
 
-        if self._function_breakpoints:
-            current_label = self._get_current_label()
-            if current_label and current_label != self._last_label:
-                self._last_label = current_label
-                if current_label in self._function_breakpoints:
-                    fb = self._function_breakpoints[current_label]
-                    fb["hit_count"] = fb.get("hit_count", 0) + 1
-                    self._pause("function breakpoint")
+        # Check breakpoints (bit 1)
+        if activity & 1:
+            # Function breakpoints - use cached flag
+            if self._has_func_breakpoints:
+                current_label = self._get_current_label()
+                if current_label and current_label != self._last_label:
+                    self._last_label = current_label
+                    fb = self._function_breakpoints.get(current_label)
+                    if fb:
+                        fb["hit_count"] = fb.get("hit_count", 0) + 1
+                        self._pause("function breakpoint")
+                        return
+
+            # Line breakpoints - use cached flag
+            if self._has_line_breakpoints and filename and line:
+                bp = self.breakpoint_manager.check_breakpoint(filename, line)
+                if bp:
+                    self._pause_at_breakpoint(bp)
                     return
 
-        if self._current_filename and self._current_line:
-            bp = self.breakpoint_manager.check_breakpoint(self._current_filename, self._current_line)
-            if bp:
-                self._pause_at_breakpoint(bp)
-                return
-
-        if self.step_mode == StepMode.INTO:
-            self._pause_for_step()
-        elif self.step_mode == StepMode.OVER:
-            current_depth = self._get_call_depth()
-            if current_depth <= self.step_depth:
+        # Stepping (bit 2)
+        if activity & 2:
+            if self.step_mode == StepMode.INTO:
                 self._pause_for_step()
+            elif self.step_mode == StepMode.OVER:
+                if self._get_call_depth() <= self.step_depth:
+                    self._pause_for_step()
 
     def _get_call_depth(self) -> int:
         """Get the current Ren'Py call stack depth."""
@@ -537,6 +605,8 @@ class DebuggerCore:
             self.variable_inspector.clear_references()
             self._pause_event.set()
 
+        self._update_activity_level()  # Update cached state
+
         if self._dap_server:
             self._dap_server.send_event("continued", {"threadId": 1, "allThreadsContinued": True})
 
@@ -556,6 +626,8 @@ class DebuggerCore:
                 self.variable_inspector.clear_references()
                 self._pause_event.set()
 
+            self._update_activity_level()  # Update cached state
+
             if self._dap_server:
                 self._dap_server.send_event("continued", {"threadId": 1, "allThreadsContinued": True})
 
@@ -573,10 +645,12 @@ class DebuggerCore:
             self.state = DebuggerState.STEPPING
             self.variable_inspector.clear_references()
             self._pause_event.set()
+        self._update_activity_level()  # Update cached state
 
     def _enable_trace(self) -> None:
         """Request Python tracing to be enabled."""
         self._trace_requested = True
+        self._update_activity_level()
 
     def _enable_trace_in_main_thread(self) -> None:
         """Actually enable tracing - must be called from main thread."""
@@ -593,11 +667,13 @@ class DebuggerCore:
         self._trace_requested = False
 
         if not self._trace_enabled:
+            self._update_activity_level()
             return
 
         sys.settrace(self._original_trace)
         self._original_trace = None
         self._trace_enabled = False
+        self._update_activity_level()
         print("[DAP] Python tracing disabled")
 
     def _trace_function(self, frame: FrameType, event: str, arg: Any) -> Optional[Callable]:
@@ -804,11 +880,13 @@ class DebuggerCore:
         if breakpoint_data:
             self._enable_trace()
 
+        self._update_activity_level()  # Update cached state
         return bps
 
     def clear_breakpoints(self, file: str) -> None:
         """Clear breakpoints for a file."""
         self.breakpoint_manager.clear_file(file)
+        self._update_activity_level()  # Update cached state
 
     def set_function_breakpoints(self, breakpoints: list[dict]) -> list[dict]:
         """
@@ -874,6 +952,7 @@ class DebuggerCore:
 
             bp_id += 1
 
+        self._update_activity_level()  # Update cached state
         return verified
 
     # Variable inspection passthrough

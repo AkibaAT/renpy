@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
-@dataclass
+@dataclass(slots=True)
 class Breakpoint:
     """Represents a single breakpoint."""
 
@@ -122,6 +122,10 @@ class BreakpointManager:
         # Cache for path normalization
         self._path_cache: dict[str, str] = {}
 
+        # Fast lookup: set of basenames that have breakpoints
+        # This allows quick rejection without path normalization
+        self._basenames_with_breakpoints: set[str] = set()
+
     def set_breakpoints(self, file: str, breakpoint_data: list[dict]) -> list[Breakpoint]:
         """
         Set breakpoints for a file, replacing any existing breakpoints.
@@ -138,6 +142,7 @@ class BreakpointManager:
             List of Breakpoint objects (verified or unverified)
         """
         normalized = self._normalize_path(file)
+        basename = os.path.basename(normalized)
 
         # Clear existing breakpoints for this file
         self._breakpoints[normalized] = {}
@@ -162,6 +167,9 @@ class BreakpointManager:
             self._breakpoints[normalized][line] = bp
             breakpoints.append(bp)
 
+        # Update basename index
+        self._rebuild_basename_index()
+
         return breakpoints
 
     def clear_file(self, file: str) -> None:
@@ -169,14 +177,26 @@ class BreakpointManager:
         normalized = self._normalize_path(file)
         if normalized in self._breakpoints:
             del self._breakpoints[normalized]
+            self._rebuild_basename_index()
 
     def clear_all(self) -> None:
         """Clear all breakpoints."""
         self._breakpoints.clear()
+        self._basenames_with_breakpoints.clear()
+
+    def _rebuild_basename_index(self) -> None:
+        """Rebuild the basename index for fast rejection."""
+        self._basenames_with_breakpoints = {
+            os.path.basename(path)
+            for path, bps in self._breakpoints.items()
+            if bps  # Only include files with actual breakpoints
+        }
 
     def check_breakpoint(self, filename: str, line: int) -> Optional[Breakpoint]:
         """
         Check if there's a breakpoint at the given location.
+
+        PERFORMANCE CRITICAL: Called on every statement execution.
 
         Args:
             filename: The file path (will be normalized)
@@ -185,6 +205,12 @@ class BreakpointManager:
         Returns:
             The Breakpoint if one exists and is verified, None otherwise
         """
+        # Fast path: check basename first to avoid expensive normalization
+        basename = os.path.basename(filename)
+        if basename not in self._basenames_with_breakpoints:
+            return None
+
+        # Slower path: normalize and check exact match
         normalized = self._normalize_path(filename)
         file_bps = self._breakpoints.get(normalized)
         if file_bps:
@@ -207,6 +233,11 @@ class BreakpointManager:
         Returns:
             The first matching Breakpoint, or None
         """
+        # Fast path: check basename first
+        basename = os.path.basename(filename)
+        if basename not in self._basenames_with_breakpoints:
+            return None
+
         normalized = self._normalize_path(filename)
         file_bps = self._breakpoints.get(normalized)
         if file_bps:
@@ -230,11 +261,16 @@ class BreakpointManager:
         return list(file_bps.values())
 
     def has_breakpoints(self) -> bool:
-        """Check if any breakpoints are set."""
-        return any(self._breakpoints.values())
+        """Check if any breakpoints are set. O(1) operation."""
+        return bool(self._basenames_with_breakpoints)
 
     def has_file_breakpoints(self, file: str) -> bool:
         """Check if any breakpoints are set for a file."""
+        # Fast path: check basename first
+        basename = os.path.basename(file)
+        if basename not in self._basenames_with_breakpoints:
+            return False
+        # Slower path for exact match
         normalized = self._normalize_path(file)
         return bool(self._breakpoints.get(normalized))
 
