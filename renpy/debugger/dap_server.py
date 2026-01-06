@@ -108,8 +108,8 @@ class DAPServer:
     def stop(self) -> None:
         """Stop the DAP server.
 
-        This method prioritizes fast shutdown. All blocking operations
-        check the shutdown event and exit quickly.
+        This method prioritizes IMMEDIATE shutdown. No waiting for threads -
+        just signal them to stop and close all sockets to unblock them.
         """
         # Signal shutdown FIRST - this unblocks all waiting operations
         self._shutdown_event.set()
@@ -136,13 +136,9 @@ class DAPServer:
                 pass
             self._socket = None
 
-        if self._client_thread:
-            self._client_thread.join(timeout=0.2)
-            self._client_thread = None
-
-        if self._server_thread:
-            self._server_thread.join(timeout=0.2)
-            self._server_thread = None
+        # Don't wait for threads - immediate shutdown means immediate
+        self._client_thread = None
+        self._server_thread = None
 
         self._log("DAP server stopped")
 
@@ -643,9 +639,21 @@ class DAPServer:
         try:
             import renpy
 
+            # Get evaluation context: frame locals + store globals
+            inspector = self.debugger.variable_inspector
+            frame = inspector._current_frame
+
+            # Use store as globals, frame locals (if available) as locals
+            globals_dict = renpy.python.store_dicts["store"]
+            if frame is not None:
+                # Merge store globals with frame locals, locals take precedence
+                locals_dict = dict(globals_dict)
+                locals_dict.update(frame.f_locals)
+            else:
+                locals_dict = globals_dict
+
             try:
-                result = renpy.python.py_eval(expression)
-                inspector = self.debugger.variable_inspector
+                result = renpy.python.py_eval(expression, globals_dict, locals_dict)
                 var_info = inspector._format_variable(expression, result)
 
                 return self._success_response(
@@ -660,7 +668,8 @@ class DAPServer:
                 )
             except SyntaxError:
                 if context == "repl":
-                    renpy.python.py_exec(expression)
+                    bytecode = renpy.python.py_compile(expression, "exec")
+                    renpy.python.py_exec_bytecode(bytecode, globals=globals_dict, locals=locals_dict)
                     return self._success_response(
                         request,
                         {
@@ -705,10 +714,21 @@ class DAPServer:
         try:
             import renpy
 
-            assignment = f"{expression} = {value}"
-            renpy.python.py_exec(assignment)
-            new_value = renpy.python.py_eval(expression)
+            # Get evaluation context: frame locals + store globals
             inspector = self.debugger.variable_inspector
+            frame = inspector._current_frame
+
+            globals_dict = renpy.python.store_dicts["store"]
+            if frame is not None:
+                locals_dict = dict(globals_dict)
+                locals_dict.update(frame.f_locals)
+            else:
+                locals_dict = globals_dict
+
+            assignment = f"{expression} = {value}"
+            bytecode = renpy.python.py_compile(assignment, "exec")
+            renpy.python.py_exec_bytecode(bytecode, globals=globals_dict, locals=locals_dict)
+            new_value = renpy.python.py_eval(expression, globals_dict, locals_dict)
             var_info = inspector._format_variable(expression, new_value)
 
             return self._success_response(
@@ -736,6 +756,11 @@ class DAPServer:
         try:
             import renpy
 
+            # Get frame locals for completions
+            inspector = self.debugger.variable_inspector
+            frame = inspector._current_frame
+            frame_locals = frame.f_locals if frame is not None else {}
+
             if "." in text_to_cursor:
                 targets = self._get_attribute_completions(text_to_cursor)
             else:
@@ -748,6 +773,17 @@ class DAPServer:
                         break
 
                 prefix_lower = prefix.lower()
+
+                # Add frame locals to completions
+                for name, value in frame_locals.items():
+                    if name.startswith("_"):
+                        continue
+                    if not prefix or name.lower().startswith(prefix_lower):
+                        if not callable(value) and not isinstance(value, type):
+                            targets.append({
+                                "label": name,
+                                "type": "variable",
+                            })
 
                 if hasattr(renpy, "store"):
                     for name in dir(renpy.store):
@@ -809,8 +845,19 @@ class DAPServer:
             obj_expr = text[:last_dot]
             attr_prefix = text[last_dot + 1:].lower()
 
+            # Get evaluation context with frame locals
+            inspector = self.debugger.variable_inspector
+            frame = inspector._current_frame
+
+            globals_dict = renpy.python.store_dicts["store"]
+            if frame is not None:
+                locals_dict = dict(globals_dict)
+                locals_dict.update(frame.f_locals)
+            else:
+                locals_dict = globals_dict
+
             try:
-                obj = renpy.python.py_eval(obj_expr)
+                obj = renpy.python.py_eval(obj_expr, globals_dict, locals_dict)
             except Exception:
                 return targets
 
