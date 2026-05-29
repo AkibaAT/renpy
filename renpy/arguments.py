@@ -166,6 +166,32 @@ class ArgumentParser(argparse.ArgumentParser):
             help="This takes as an argument a filename:linenumber pair, and tries to warp to the statement before that line number. It is only valid in conjuction with the run command.",
         )
 
+        # Debugger arguments
+        self.add_argument(
+            "--debug-server",
+            dest="debug_server",
+            action="store_true",
+            default=False,
+            help="Enable the DAP (Debug Adapter Protocol) server for IDE debugging.",
+        )
+
+        self.add_argument(
+            "--debug-port",
+            dest="debug_port",
+            type=int,
+            default=5678,
+            metavar="PORT",
+            help="The port for the DAP debug server (default: 5678).",
+        )
+
+        self.add_argument(
+            "--debug-wait",
+            dest="debug_wait",
+            action="store_true",
+            default=False,
+            help="Wait for a debugger client to connect before starting the game.",
+        )
+
         dump = self.add_argument_group(
             "JSON dump arguments",
             description="Ren'Py can dump information about the game to a JSON file. These options let you select the file, and choose what is dumped.",
