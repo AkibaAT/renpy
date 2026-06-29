@@ -69,6 +69,12 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
                 self._handle_get_dialogue()
             elif path == '/api/choices':
                 self._handle_get_choices()
+            elif path == '/api/interactables':
+                self._handle_get_interactables()
+            elif path == '/api/image-attributes':
+                self._handle_get_image_attributes(query_params)
+            elif path == '/api/behind-tags':
+                self._handle_get_behind_tags(query_params)
             elif path == '/api/saves':
                 self._handle_list_saves()
             elif path == '/api/screenshot':
@@ -78,6 +84,12 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
                 
         except Exception as e:
             self._send_error(500, str(e))
+
+    def do_OPTIONS(self):
+        """Handle CORS preflight requests."""
+        self.send_response(204)
+        self._send_cors_headers()
+        self.end_headers()
     
     def do_POST(self):
         """Handle POST requests."""
@@ -148,6 +160,27 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
         """Handle choices endpoint."""
         choices = self.testing_interface.get_choices()
         self._send_json_response({'choices': choices})
+
+    def _handle_get_interactables(self):
+        """Handle interactables endpoint."""
+        interactables = self.testing_interface.get_interactables()
+        self._send_json_response({'interactables': interactables})
+
+    def _handle_get_image_attributes(self, query_params):
+        """Handle image attribute discovery endpoint."""
+        tag = self._first_query_arg(query_params, 'tag')
+        if not tag:
+            self._send_error(400, "Missing 'tag' query parameter")
+            return
+
+        attributes = self.testing_interface.get_image_attributes(tag)
+        self._send_json_response({'tag': tag, 'attributes': attributes})
+
+    def _handle_get_behind_tags(self, query_params):
+        """Handle behind tag discovery endpoint."""
+        exclude = self._first_query_arg(query_params, 'exclude')
+        tags = self.testing_interface.get_behind_tags(exclude)
+        self._send_json_response({'tags': tags})
     
     def _handle_list_saves(self):
         """Handle list saves endpoint."""
@@ -164,6 +197,7 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
                 self.send_header('Content-Type', 'image/png')
                 self.send_header('Content-Length', str(len(screenshot_data)))
                 self.send_header('Cache-Control', 'no-cache')
+                self._send_cors_headers()
                 self.end_headers()
                 self.wfile.write(screenshot_data)
             else:
@@ -255,7 +289,7 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(response)))
-        self.send_header('Access-Control-Allow-Origin', '*')
+        self._send_cors_headers()
         self.end_headers()
         self.wfile.write(response.encode('utf-8'))
     
@@ -266,9 +300,20 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(response)))
-        self.send_header('Access-Control-Allow-Origin', '*')
+        self._send_cors_headers()
         self.end_headers()
         self.wfile.write(response.encode('utf-8'))
+
+    def _send_cors_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+
+    def _first_query_arg(self, query_params, name):
+        value = query_params.get(name)
+        if not value:
+            return None
+        return value[0]
     
     def log_message(self, format, *args):
         """Override to reduce logging noise."""

@@ -48,7 +48,7 @@ class TestingInterface(object):
         """Initialize the testing interface."""
         self.state_inspector = state_inspector.StateInspector()
         self.state_manager = state_manager.StateManager()
-        self.game_controller = game_controller.GameController()
+        self.game_controller = game_controller.GameController(self)
         self.http_server = http_server.TestingHTTPServer(self)
         self._enabled = True
     
@@ -106,6 +106,24 @@ class TestingInterface(object):
         if not self._enabled:
             raise RuntimeError("Testing interface is disabled")
         return self.state_inspector.get_choices()
+
+    def get_interactables(self):
+        """Get currently available UI interactables."""
+        if not self._enabled:
+            raise RuntimeError("Testing interface is disabled")
+        return self.state_inspector.get_ui_interactables()
+
+    def get_image_attributes(self, tag):
+        """Get available image attributes for a tag."""
+        if not self._enabled:
+            raise RuntimeError("Testing interface is disabled")
+        return self.state_inspector.get_image_attributes(tag)
+
+    def get_behind_tags(self, exclude_tag=None):
+        """Get current image tags that can be used for behind positioning."""
+        if not self._enabled:
+            raise RuntimeError("Testing interface is disabled")
+        return self.state_inspector.get_behind_tags(exclude_tag)
     
     # State Management Methods
     
@@ -318,8 +336,6 @@ class TestingInterface(object):
         try:
             import threading
 
-            print(f"[DEBUG] Taking screenshot from thread: {threading.current_thread().name}")
-
             # Check if we're in the main thread
             if threading.current_thread().name == "MainThread":
                 # We're already in the main thread, call directly
@@ -327,8 +343,6 @@ class TestingInterface(object):
             else:
                 # We're in a different thread (likely HTTP server thread)
                 # Use invoke_in_main_thread to execute in the main thread
-                print("[DEBUG] Not in main thread, invoking in main thread...")
-
                 result_container = {'result': None, 'exception': None, 'completed': False}
 
                 def screenshot_wrapper():
@@ -350,20 +364,15 @@ class TestingInterface(object):
 
                 while not result_container['completed']:
                     if time.time() - start_time > timeout:
-                        print("[DEBUG] Screenshot timeout waiting for main thread")
                         return None
                     time.sleep(0.01)  # Small sleep to avoid busy waiting
 
                 if result_container['exception']:
-                    print(f"[DEBUG] Screenshot exception in main thread: {result_container['exception']}")
                     return None
 
                 return result_container['result']
 
         except Exception as e:
-            print(f"[DEBUG] Screenshot error: {e}")
-            import traceback
-            print(f"[DEBUG] Screenshot traceback: {traceback.format_exc()}")
             return None
 
     def _take_screenshot_main_thread(self):
@@ -375,28 +384,17 @@ class TestingInterface(object):
         """
         try:
             import renpy.exports.displayexports as renpydisplay
-            print("[DEBUG] Taking screenshot in main thread using Ren'Py's official API...")
 
             try:
-                print("[DEBUG] Using renpy.exports.displayexports.screenshot_to_bytes()...")
-
                 png_data = renpydisplay.screenshot_to_bytes(None)
 
                 if png_data:
-                    print(f"[DEBUG] Screenshot captured via screenshot_to_bytes(): {len(png_data)} bytes")
                     return png_data
-                else:
-                    print("[DEBUG] screenshot_to_bytes() returned no data")
 
-            except Exception as e:
-                print(f"[DEBUG] screenshot_to_bytes() method failed: {e}")
-                import traceback
-                print(f"[DEBUG] Traceback: {traceback.format_exc()}")
+            except Exception:
+                pass
 
             return None
 
-        except Exception as e:
-            print(f"[DEBUG] Screenshot error in main thread: {e}")
-            import traceback
-            print(f"[DEBUG] Screenshot traceback: {traceback.format_exc()}")
+        except Exception:
             return None

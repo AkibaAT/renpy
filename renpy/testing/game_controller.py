@@ -39,11 +39,12 @@ class GameController(object):
     Provides methods to programmatically control game progression.
     """
     
-    def __init__(self):
+    def __init__(self, testing_interface=None):
         """Initialize the game controller."""
         self._auto_advance_enabled = False
         self._auto_advance_delay = 0.1
         self._skip_transitions = False
+        self.testing_interface = testing_interface
     
     def advance_dialogue(self):
         """
@@ -99,24 +100,200 @@ class GameController(object):
             bool: True if selection was successful
         """
         try:
-            # This is a simplified implementation
-            # In practice, we'd need to hook into the menu system more deeply
-            # to identify and select specific choices
-            
+            choices = self._get_current_choices()
+
             if isinstance(choice, int):
-                # Select by index - post keyboard event
-                key = pygame.K_1 + choice if choice < 9 else None
-                if key:
-                    event = pygame.event.Event(pygame.KEYDOWN, {'key': key})
-                    pygame.event.post(event)
-                    return True
+                if 0 <= choice < len(choices):
+                    if self._invoke_choice_action(choices[choice]):
+                        return True
+
+                return self._select_choice_by_number_key(choice)
+
             elif isinstance(choice, str):
-                # Select by text - would need more complex implementation
-                # to find the choice and click on it
-                pass
+                for choice_data in choices:
+                    if choice_data.get('label') == choice:
+                        return self._invoke_choice_action(choice_data)
             
             return False
             
+        except Exception:
+            return False
+
+    def _get_current_choices(self):
+        if self.testing_interface:
+            return self.testing_interface.get_choices()
+
+        from . import state_inspector
+        inspector = state_inspector.StateInspector()
+        return inspector.get_choices()
+
+    def _select_choice_by_number_key(self, choice):
+        try:
+            if not isinstance(choice, int) or choice < 0 or choice >= 9:
+                return False
+
+            key = pygame.K_1 + choice
+            event = pygame.event.Event(pygame.KEYDOWN, {'key': key})
+            pygame.event.post(event)
+
+            event = pygame.event.Event(pygame.KEYUP, {'key': key})
+            pygame.event.post(event)
+
+            return True
+        except Exception:
+            return False
+
+    def _invoke_choice_action(self, choice_data):
+        if not choice_data or not choice_data.get('enabled', True):
+            return False
+
+        action = self._find_action_for_choice(choice_data)
+        if action is None:
+            return False
+
+        return self._run_action(action)
+
+    def _find_action_for_choice(self, choice_data):
+        label = choice_data.get('label')
+        screen_name = choice_data.get('screen')
+
+        if not label:
+            return None
+
+        try:
+            scene_lists = renpy.exports.scene_lists()
+            if not scene_lists or not hasattr(scene_lists, 'layers'):
+                return None
+
+            for layer_list in scene_lists.layers.values():
+                for sle in layer_list:
+                    displayable = getattr(sle, 'displayable', None)
+                    if displayable is None:
+                        continue
+
+                    current_screen = getattr(displayable, 'screen_name', None)
+                    if isinstance(current_screen, tuple):
+                        current_screen = current_screen[0]
+
+                    if screen_name and current_screen != screen_name:
+                        continue
+
+                    action = self._find_action_in_screen_scope(displayable, label)
+                    if action is not None:
+                        return action
+
+                    action = self._find_button_action_recursive(displayable, label)
+                    if action is not None:
+                        return action
+        except Exception:
+            return None
+
+        return None
+
+    def _find_action_in_screen_scope(self, displayable, label):
+        try:
+            scope = getattr(displayable, 'scope', None)
+            if not scope:
+                return None
+
+            for item in scope.get('items') or []:
+                if not hasattr(item, 'caption') or not hasattr(item, 'action'):
+                    continue
+
+                if str(item.caption).strip() == str(label).strip():
+                    return item.action
+        except Exception:
+            pass
+
+        return None
+
+    def _find_button_action_recursive(self, widget, target_label):
+        try:
+            text = self._extract_widget_text(widget)
+            if text and text.strip() == str(target_label).strip():
+                for attr in ['clicked', 'action', 'activate']:
+                    if hasattr(widget, attr):
+                        action = getattr(widget, attr)
+                        if action:
+                            return action
+
+            if hasattr(widget, 'child') and widget.child:
+                result = self._find_button_action_recursive(widget.child, target_label)
+                if result:
+                    return result
+
+            if hasattr(widget, 'children') and widget.children:
+                for child in widget.children:
+                    result = self._find_button_action_recursive(child, target_label)
+                    if result:
+                        return result
+        except Exception:
+            pass
+
+        return None
+
+    def _extract_widget_text(self, widget):
+        try:
+            if hasattr(widget, 'text') and widget.text:
+                return str(widget.text)
+
+            if hasattr(widget, 'child') and widget.child:
+                child_text = self._extract_widget_text(widget.child)
+                if child_text:
+                    return child_text
+
+            if hasattr(widget, 'children') and widget.children:
+                for child in widget.children:
+                    child_text = self._extract_widget_text(child)
+                    if child_text:
+                        return child_text
+        except Exception:
+            pass
+
+        return None
+
+    def _run_action(self, action):
+        try:
+            if hasattr(action, 'get_sensitive') and action.get_sensitive() is False:
+                return False
+        except Exception:
+            pass
+
+        def run():
+            import renpy.display.behavior
+            renpy.display.behavior.run(action)
+
+        return self._run_in_main_thread(run)
+
+    def _run_in_main_thread(self, callable_):
+        try:
+            import threading
+
+            if threading.current_thread().name == "MainThread":
+                callable_()
+                return True
+
+            result = {'completed': False, 'exception': None}
+
+            def wrapper():
+                try:
+                    callable_()
+                except Exception as e:
+                    result['exception'] = e
+                finally:
+                    result['completed'] = True
+
+            from renpy.exports.platformexports import invoke_in_main_thread
+            invoke_in_main_thread(wrapper)
+
+            timeout = 5.0
+            started = time.time()
+            while not result['completed']:
+                if time.time() - started > timeout:
+                    return False
+                time.sleep(0.01)
+
+            return result['exception'] is None
         except Exception:
             return False
     
