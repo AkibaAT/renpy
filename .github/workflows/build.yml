@@ -759,15 +759,16 @@ jobs:
       env:
         OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
 
-    - name: Generate public key for extension verification
+    - name: Generate public update key
       working-directory: renpy-build/renpy
       run: |
         ./lib/py3-linux-x86_64/python -c "
-        import ecdsa
+        import renpy.ecsign
         with open('update.pem', 'rb') as f:
-            sk = ecdsa.SigningKey.from_pem(f.read())
-        with open('launcher/game/public_key.pem', 'wb') as f:
-            f.write(sk.verifying_key.to_pem())
+            signing_key = renpy.ecsign.pem_to_der(f.read())
+        public_key = renpy.ecsign.get_public_key_from_private(signing_key)
+        with open('public_key.pem', 'wb') as f:
+            f.write(renpy.ecsign.der_to_pem(public_key, 'PUBLIC'))
         "
 
     - name: Determine if nightly build

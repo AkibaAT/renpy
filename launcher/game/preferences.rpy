@@ -255,6 +255,7 @@ screen preferences():
 
                             textbutton _("Show edit file section") style "l_checkbox" action ToggleField(persistent, "show_edit_funcs")
                             textbutton _("Show tutorial projects") style "l_checkbox" action ToggleField(persistent, "show_tutorial_projects")
+                            textbutton _("Launch projects with API server") style "l_checkbox" action ToggleField(persistent, "api_server_enabled")
                             textbutton _("Large fonts") style "l_checkbox" action [ ToggleField(persistent, "large_print"), renpy.utter_restart ]
 
                             if interface.local_doc_exists:

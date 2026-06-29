@@ -43,6 +43,131 @@ except ImportError:
 import renpy
 
 
+API_ENDPOINTS = [
+    ("GET", "/api/status", "Get server status and basic game information."),
+    ("GET", "/api/state", "Get comprehensive game state."),
+    ("GET", "/api/variables", "Get current game variables."),
+    ("GET", "/api/scene", "Get scene and screen information."),
+    ("GET", "/api/dialogue", "Get current dialogue information."),
+    ("GET", "/api/choices", "Get available menu choices."),
+    ("GET", "/api/interactables", "Get current interactable displayables."),
+    ("GET", "/api/image-attributes", "Get known attributes for an image tag."),
+    ("GET", "/api/behind-tags", "Get image tags available for behind clauses."),
+    ("GET", "/api/saves", "List available testing save slots."),
+    ("GET", "/api/screenshot", "Get a PNG screenshot of the current game."),
+    ("POST", "/api/advance", "Advance dialogue or story progression."),
+    ("POST", "/api/rollback", "Roll back a number of steps."),
+    ("POST", "/api/choice", "Select a menu choice by index or text."),
+    ("POST", "/api/jump", "Jump to a label."),
+    ("POST", "/api/variable", "Set a store variable."),
+    ("POST", "/api/save", "Save game state."),
+    ("POST", "/api/load", "Load game state."),
+    ("POST", "/api/click", "Send a mouse click."),
+    ("POST", "/api/key", "Send a key press."),
+    ("GET", "/docs", "Show API documentation."),
+    ("GET", "/openapi.json", "Get the OpenAPI specification."),
+]
+
+
+def get_openapi_spec():
+    """
+    Returns a compact OpenAPI specification for the testing HTTP API.
+    """
+
+    paths = { }
+
+    for method, path, summary in API_ENDPOINTS:
+        method_key = method.lower()
+        operation = {
+            "summary": summary,
+            "responses": {
+                "200": {
+                    "description": "Successful response",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                            },
+                        },
+                    },
+                },
+            },
+        }
+
+        if path == "/api/screenshot":
+            operation["responses"]["200"]["content"] = {
+                "image/png": {
+                    "schema": {
+                        "type": "string",
+                        "format": "binary",
+                    },
+                },
+            }
+
+        if path == "/docs":
+            operation["responses"]["200"]["content"] = {
+                "text/html": {
+                    "schema": {
+                        "type": "string",
+                    },
+                },
+            }
+
+        if method == "POST":
+            operation["requestBody"] = {
+                "required": False,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                        },
+                    },
+                },
+            }
+
+        if path == "/api/image-attributes":
+            operation["parameters"] = [
+                {
+                    "name": "tag",
+                    "in": "query",
+                    "required": True,
+                    "schema": {
+                        "type": "string",
+                    },
+                },
+            ]
+
+        if path == "/api/behind-tags":
+            operation["parameters"] = [
+                {
+                    "name": "exclude",
+                    "in": "query",
+                    "required": False,
+                    "schema": {
+                        "type": "string",
+                    },
+                },
+            ]
+
+        paths.setdefault(path, { })[method_key] = operation
+
+    return {
+        "openapi": "3.0.3",
+        "info": {
+            "title": "Ren'Py Testing API",
+            "version": "1.0.0",
+            "description": "HTTP API for controlling and inspecting a running Ren'Py game.",
+        },
+        "servers": [
+            {
+                "url": "http://localhost:8080",
+                "description": "Local testing server",
+            },
+        ],
+        "paths": paths,
+    }
+
+
 class TestingAPIHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the testing API."""
     
@@ -79,6 +204,10 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
                 self._handle_list_saves()
             elif path == '/api/screenshot':
                 self._handle_get_screenshot()
+            elif path == '/docs' or path == '/swagger':
+                self._handle_docs()
+            elif path == '/openapi.json':
+                self._handle_openapi_spec()
             else:
                 self._send_error(404, "Endpoint not found")
                 
@@ -282,6 +411,61 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
         
         success = self.testing_interface.game_controller.send_key(key)
         self._send_json_response({'success': success})
+
+    def _handle_openapi_spec(self):
+        """Handle OpenAPI spec endpoint."""
+        spec = get_openapi_spec()
+        host = self.headers.get('Host')
+
+        if host:
+            spec["servers"] = [
+                {
+                    "url": "http://{}".format(host),
+                    "description": "Current testing server",
+                },
+            ]
+
+        self._send_json_response(spec)
+
+    def _handle_docs(self):
+        """Handle API documentation endpoint."""
+        rows = "\n".join(
+            "        <tr><td>{}</td><td><code>{}</code></td><td>{}</td></tr>".format(method, path, summary)
+            for method, path, summary in API_ENDPOINTS
+            if path != "/docs"
+        )
+
+        html = """<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ren'Py Testing API</title>
+    <style>
+        body {{ font-family: system-ui, sans-serif; margin: 2rem; line-height: 1.5; color: #20242a; }}
+        table {{ border-collapse: collapse; width: 100%; max-width: 1100px; }}
+        th, td {{ border-bottom: 1px solid #d9dde3; padding: 0.5rem 0.75rem; text-align: left; vertical-align: top; }}
+        th {{ background: #f4f6f8; }}
+        code {{ background: #eef1f4; border-radius: 4px; padding: 0.1rem 0.25rem; }}
+        a {{ color: #1b61b6; }}
+    </style>
+</head>
+<body>
+    <h1>Ren'Py Testing API</h1>
+    <p>Use this local API to inspect and control the running game. The machine-readable spec is available at <a href="/openapi.json">/openapi.json</a>.</p>
+    <table>
+        <thead>
+            <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+{}
+        </tbody>
+    </table>
+</body>
+</html>
+""".format(rows)
+
+        self._send_text_response(html, "text/html; charset=utf-8")
     
     def _send_json_response(self, data):
         """Send JSON response."""
@@ -292,6 +476,16 @@ class TestingAPIHandler(BaseHTTPRequestHandler):
         self._send_cors_headers()
         self.end_headers()
         self.wfile.write(response.encode('utf-8'))
+
+    def _send_text_response(self, text, content_type):
+        """Send text response."""
+        response = text.encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(response)))
+        self._send_cors_headers()
+        self.end_headers()
+        self.wfile.write(response)
     
     def _send_error(self, code, message):
         """Send error response."""

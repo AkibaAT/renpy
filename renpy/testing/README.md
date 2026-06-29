@@ -105,7 +105,13 @@ renpy.testing_load_state(slot)
 - `GET /api/scene` - Get scene and screen information
 - `GET /api/dialogue` - Get current dialogue information
 - `GET /api/choices` - Get available menu choices
+- `GET /api/interactables` - Get current interactable displayables
+- `GET /api/image-attributes?tag=tag` - Get known attributes for an image tag
+- `GET /api/behind-tags?exclude=tag` - Get image tags available for behind clauses
 - `GET /api/saves` - List available save slots
+- `GET /api/screenshot` - Get a PNG screenshot of the current game
+- `GET /docs` - Show local API documentation
+- `GET /openapi.json` - Get the OpenAPI specification
 
 ### POST Endpoints (Game Control)
 

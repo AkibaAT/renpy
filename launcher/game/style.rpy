@@ -309,7 +309,6 @@ style l_left_button is l_right_button:
 
 style l_left_button_text is l_right_button_text
 
-
 # The root frame. This contains everything but the bottom navigation,
 # and buttons.
 style l_root is l_default:

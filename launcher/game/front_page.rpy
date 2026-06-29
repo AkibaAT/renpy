@@ -94,8 +94,8 @@ screen front_page:
             use front_page_project
 
     if project.current is not None:
-        textbutton _("Launch Project") action project.Launch() style "l_right_button"
-        key "K_F5" action project.Launch()
+        textbutton _("Launch Project") action project.LaunchWithAPI() style "l_right_button"
+        key "K_F5" action project.LaunchWithAPI()
 
 
 # This is used by front_page to display the list of known projects on the screen.
@@ -109,8 +109,13 @@ screen front_page_project_list:
 
         if projects:
             for p in projects:
+                $ project_display = p.display_name if p.display_name else p.name
+                $ api_port = project.get_project_api_port(p.path)
 
-                textbutton ("[p.display_name]" if p.display_name else "[p.name!q]"):
+                if api_port:
+                    $ project_display = "{} {{color=#00ff00}}(API:{}){{/color}}".format(project_display, api_port)
+
+                textbutton project_display:
                     action project.Select(p)
                     alt _("Select project [text].")
                     style "l_list"
@@ -128,7 +133,13 @@ screen front_page_project_list:
 
                 if not pf.hidden:
                     for p in pf.projects:
-                        textbutton _(f"[p.display_name]" if p.display_name else "[p.name!q]"):
+                        $ project_display = p.display_name if p.display_name else p.name
+                        $ api_port = project.get_project_api_port(p.path)
+
+                        if api_port:
+                            $ project_display = "{} {{color=#00ff00}}(API:{}){{/color}}".format(project_display, api_port)
+
+                        textbutton project_display:
                             action project.Select(p)
                             alt _("Select project [text].")
                             style "l_list"
@@ -219,6 +230,12 @@ screen front_page_project:
 
                 textbutton _("Delete Persistent") action Jump("rmpersistent")
                 textbutton _("Force Recompile") action Jump("force_recompile")
+
+                $ api_port = project.get_project_api_port(p.path)
+
+                if api_port:
+                    add HALF_SPACER
+                    textbutton _("Open API Documentation (:{})").format(api_port) action OpenURL("http://localhost:{}/docs".format(api_port))
 
                 # textbutton "Relaunch" action Relaunch
 

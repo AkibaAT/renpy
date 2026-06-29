@@ -39,6 +39,8 @@ init 1 python in editor:
     import os
     import os.path
 
+    EXTENSIONS_URL = os.environ.get("OKAPY_EXTENSIONS_URL", "https://okapy.li/extensions").rstrip("/")
+
     # Should we set up the editor?
     set_editor = "RENPY_EDIT_PY" not in os.environ
 
@@ -323,7 +325,7 @@ init 1 python in editor:
             if fe.dlc.startswith("extension:"):
                 import installer
                 manifest = fe.dlc.partition(":")[2]
-                renpy.invoke_in_new_context(installer.manifest, "https://www.renpy.org/extensions/{}/{}.py".format(manifest, manifest), renpy=True)
+                renpy.invoke_in_new_context(installer.manifest, "{}/{}/{}.py".format(EXTENSIONS_URL, manifest, manifest), renpy=True)
             else:
                 store.add_dlc(fe.dlc)
 
@@ -618,14 +620,13 @@ screen editor:
 label reinstall_vscode:
     python hide:
         manifest = "vscode"
-        renpy.invoke_in_new_context(installer.manifest, "https://www.renpy.org/extensions/{}/{}.py".format(manifest, manifest), renpy=True)
+        renpy.invoke_in_new_context(installer.manifest, "{}/{}/{}.py".format(EXTENSIONS_URL, manifest, manifest), renpy=True)
 
     jump editor_preference
 
 label upgrade_vscode_extension:
     python hide:
-        manifest = "vscode"
-        renpy.invoke_in_new_context(installer.manifest, "https://www.renpy.org/extensions/vscode/upgrade_extension.py", renpy=True)
+        renpy.invoke_in_new_context(installer.manifest, "{}/vscode/upgrade_extension.py".format(EXTENSIONS_URL), renpy=True)
 
     jump post_extension_check
 

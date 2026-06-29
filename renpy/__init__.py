@@ -118,8 +118,17 @@ class VersionTuple(NamedTuple):
 version_tuple = VersionTuple(*version_dict["semver"])
 "A NamedTuple giving the version numbers as (major, minor, patch, commit)."
 
-version: str = f"Ren'Py {version_only}"
+edition: str | None = "Oka'Py"
+"The edition name, or None for upstream Ren'Py."
+
+website: str = "https://okapy.li/" if edition else "https://www.renpy.org/"
+"The website URL for this edition."
+
+version: str = "Ren'Py " + version_only + (f" ({edition} Edition)" if edition else "")
 "A verbose string giving the whole version."
+
+version_display: str = version_only + (f" ({edition} Edition)" if edition else "")
+"A string giving the version number and edition for display."
 
 # Other versions.
 script_version: int = 5003000

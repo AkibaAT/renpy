@@ -35,8 +35,66 @@ init python in project:
     import subprocess
     import re
     import tempfile
+    import socket
 
     multipersistent = MultiPersistent("launcher.renpy.org")
+
+    def normalize_project_path(project_path):
+        if project_path:
+            return os.path.normpath(os.path.abspath(project_path))
+
+        return project_path
+
+    def find_available_port(start_port=8080, max_attempts=100):
+        """
+        Finds an available localhost port, starting at start_port.
+        """
+
+        for port in range(start_port, start_port + max_attempts):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.bind(("localhost", port))
+                    return port
+            except OSError:
+                continue
+
+        return None
+
+    def is_port_in_use(port):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(0.25)
+                return sock.connect_ex(("localhost", port)) == 0
+        except Exception:
+            return False
+
+    _active_api_servers = { }
+
+    def register_api_server(project_path, port):
+        project_path = normalize_project_path(project_path)
+
+        if project_path:
+            _active_api_servers[project_path] = port
+
+    def unregister_api_server(project_path):
+        project_path = normalize_project_path(project_path)
+
+        if project_path:
+            _active_api_servers.pop(project_path, None)
+
+    def get_project_api_port(project_path):
+        project_path = normalize_project_path(project_path)
+
+        if project_path not in _active_api_servers:
+            return None
+
+        port = _active_api_servers[project_path]
+
+        if is_port_in_use(port):
+            return port
+
+        unregister_api_server(project_path)
+        return None
 
     if persistent.blurb is None:
         persistent.blurb = 0
@@ -47,6 +105,12 @@ init python in project:
         persistent.collapsed_folders = { }
 
     persistent.collapsed_folders.setdefault("Tutorials", False)
+
+    if persistent.api_server_enabled is None:
+        persistent.api_server_enabled = False
+
+    if persistent.api_server_port is None:
+        persistent.api_server_port = 8080
 
     project_filter = [ i.strip() for i in os.environ.get("RENPY_PROJECT_FILTER", "").split(":") if i.strip() ]
 
@@ -1020,6 +1084,45 @@ init python in project:
 
         def __call__(self):
             self.project.launch()
+            renpy.invoke_in_new_context(self.post_launch)
+
+    class LaunchWithAPI(Launch):
+        def __init__(self, p=None):
+            super(LaunchWithAPI, self).__init__(p)
+            self.actual_port = None
+
+        def post_launch(self):
+            blurb = LAUNCH_BLURBS[persistent.blurb % len(LAUNCH_BLURBS)]
+            persistent.blurb += 1
+
+            if persistent.skip_splashscreen:
+                submessage = _("Splashscreen skipped in launcher preferences.")
+            else:
+                submessage = None
+
+            if persistent.api_server_enabled and self.actual_port:
+                api_msg = _("API server will start on port {}.").format(self.actual_port)
+                if submessage:
+                    submessage += "\n" + api_msg
+                else:
+                    submessage = api_msg
+
+            interface.interaction(_("Launching"), blurb, submessage=submessage, pause=2.5)
+
+        def __call__(self):
+            args = [ ]
+
+            if persistent.api_server_enabled:
+                port = find_available_port(persistent.api_server_port)
+
+                if port is None:
+                    port = persistent.api_server_port
+
+                self.actual_port = port
+                args.extend([ "http_server", "--host", "localhost", "--port", str(port) ])
+                register_api_server(self.project.path, port)
+
+            self.project.launch(args)
             renpy.invoke_in_new_context(self.post_launch)
 
     class Rescan(Action):
