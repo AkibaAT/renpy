@@ -665,10 +665,49 @@ jobs:
     - name: Download iOS SDKs from 1Password
       run: |
         mkdir -p renpy-build/tars
-        op read "op://renpy/iPhoneOS14.0.sdk.tar/iPhoneOS14.0.sdk.tar.gz" --out-file renpy-build/tars/iPhoneOS14.0.sdk.tar.gz
-        op read "op://renpy/iPhoneSimulator14.0.sdk.tar/iPhoneSimulator14.0.sdk.tar.gz" --out-file renpy-build/tars/iPhoneSimulator14.0.sdk.tar.gz
+        op read "op://renpy/iPhoneOS26.5.sdk.tar/iPhoneOS26.5.sdk.tar.gz" --out-file renpy-build/tars/iPhoneOS26.5.sdk.tar.gz
+        op read "op://renpy/iPhoneSimulator26.5.sdk.tar/iPhoneSimulator26.5.sdk.tar.gz" --out-file renpy-build/tars/iPhoneSimulator26.5.sdk.tar.gz
       env:
         OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
+    - name: Normalize iOS SDK tarballs
+      run: |
+        set -euo pipefail
+
+        normalize_sdk() {
+          local source_tarball="$1"
+          local output_tarball="$2"
+          local expected_dir="$3"
+          local workdir
+          local sdk_dir
+
+          workdir="$(mktemp -d)"
+          tar -xzf "$source_tarball" -C "$workdir"
+
+          sdk_dir="$(find "$workdir" -mindepth 1 -maxdepth 1 -type d -name '*.sdk' | head -n 1)"
+
+          if [ -z "$sdk_dir" ]; then
+            echo "No SDK directory found in $source_tarball" >&2
+            exit 1
+          fi
+
+          if [ "$(basename "$sdk_dir")" != "$expected_dir" ]; then
+            mv "$sdk_dir" "$workdir/$expected_dir"
+          fi
+
+          tar -czf "$output_tarball" -C "$workdir" "$expected_dir"
+          rm -rf "$workdir"
+        }
+
+        normalize_sdk \
+          renpy-build/tars/iPhoneOS26.5.sdk.tar.gz \
+          renpy-build/tars/iPhoneOS.sdk.tar.gz \
+          iPhoneOS.sdk
+
+        normalize_sdk \
+          renpy-build/tars/iPhoneSimulator26.5.sdk.tar.gz \
+          renpy-build/tars/iPhoneSimulator.sdk.tar.gz \
+          iPhoneSimulator.sdk
 
     - name: Download Cubism SDK
       run: |
