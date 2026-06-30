@@ -901,29 +901,38 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Deploy to update server
+    - name: Load update server credentials
       run: |
         set +x  # Disable command echoing to prevent secrets from appearing in logs
 
-        # Get deploy credentials from 1Password
-        mkdir -p ~/.ssh
-        op read "op://renpy/okapy_deploy/private_key" --force --out-file ~/.ssh/deploy_key
-        chmod 600 ~/.ssh/deploy_key
-
+        DEPLOY_KEY=$(op read "op://renpy/okapy_deploy/private_key")
         DEPLOY_HOST=$(op read "op://renpy/okapy_deploy/host")
         DEPLOY_PATH=$(op read "op://renpy/okapy_deploy/path")
-        DEPLOY_URL="https://updates.okapy.li"
 
-        # Mask sensitive values from logs
+        while IFS= read -r line; do
+          [ -n "$line" ] && echo "::add-mask::$line"
+        done <<< "$DEPLOY_KEY"
         echo "::add-mask::$DEPLOY_HOST"
         echo "::add-mask::$DEPLOY_PATH"
 
-        # Add host to known_hosts
-        ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+        DEPLOY_KEY_DELIMITER="DEPLOY_KEY_$(date +%s%N)"
+        {
+          echo "DEPLOY_KEY<<$DEPLOY_KEY_DELIMITER"
+          echo "$DEPLOY_KEY"
+          echo "$DEPLOY_KEY_DELIMITER"
+          echo "DEPLOY_HOST=$DEPLOY_HOST"
+          echo "DEPLOY_PATH=$DEPLOY_PATH"
+        } >> "$GITHUB_ENV"
+      env:
+        OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
 
+    - name: Determine update metadata
+      id: deploy_info
+      run: |
         # Get version info
         VERSION_DIR=$(ls renpy-build/renpy/dl/)
-        VERSION=$(cat renpy-build/renpy/renpy/vc_version.py | grep "^version" | cut -d"'" -f2)
+        VERSION=$(grep "^version = " renpy-build/renpy/renpy/vc_version.py | cut -d"'" -f2)
+        DEPLOY_URL="https://updates.okapy.li"
 
         # Determine channel based on branch
         BRANCH="${{ github.ref_name }}"
@@ -946,19 +955,6 @@ jobs:
         IFS='.' read -ra VERSION_PARTS <<< "${VERSION%%+*}"
         SPLIT_VERSION="[${VERSION_PARTS[0]:-0}, ${VERSION_PARTS[1]:-0}, ${VERSION_PARTS[2]:-0}, ${VERSION_PARTS[3]:-0}]"
 
-        # Deploy files using rsync
-        rsync -avz --delete \
-          -e "ssh -i ~/.ssh/deploy_key" \
-          "renpy-build/renpy/dl/${VERSION_DIR}/" \
-          "okapy-deploy@${DEPLOY_HOST}:${DEPLOY_PATH}/${DEPLOY_DIR}/"
-
-        # Update channels.json
-        CHANNELS_FILE="/tmp/channels.json"
-
-        # Fetch existing channels.json or create empty one
-        ssh -i ~/.ssh/deploy_key "okapy-deploy@${DEPLOY_HOST}" \
-          "cat ${DEPLOY_PATH}/channels.json 2>/dev/null" > "$CHANNELS_FILE" || echo '{"releases":[]}' > "$CHANNELS_FILE"
-
         # Get timestamp and pretty version
         TIMESTAMP=$(date +%s)
         PRETTY_VERSION="Oka'Py $VERSION"
@@ -972,11 +968,56 @@ jobs:
           DESCRIPTION="The latest nightly build with newest features."
         fi
 
+        {
+          echo "version_dir=$VERSION_DIR"
+          echo "deploy_dir=$DEPLOY_DIR"
+          echo "channel=$CHANNEL"
+          echo "version=$VERSION"
+          echo "split_version=$SPLIT_VERSION"
+          echo "url=${DEPLOY_URL}/${DEPLOY_DIR}/updates.json"
+          echo "timestamp=$TIMESTAMP"
+          echo "pretty_version=$PRETTY_VERSION"
+          echo "description=$DESCRIPTION"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Deploy files to update server
+      uses: burnett01/rsync-deployments@66257cad6bfeb2171d3b6bfa6c9a22279dd9c3a1 # 8.0.5
+      with:
+        switches: -avz --delete
+        path: renpy-build/renpy/dl/${{ steps.deploy_info.outputs.version_dir }}/
+        remote_path: ${{ env.DEPLOY_PATH }}/${{ steps.deploy_info.outputs.deploy_dir }}/
+        remote_host: ${{ env.DEPLOY_HOST }}
+        remote_user: okapy-deploy
+        remote_key: ${{ env.DEPLOY_KEY }}
+        strict_hostkeys_checking: false
+
+    - name: Update update server channels
+      run: |
+        set +x  # Disable command echoing to prevent secrets from appearing in logs
+
+        mkdir -p ~/.ssh
+        printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+
+        SSH_OPTS=(
+          -i ~/.ssh/deploy_key
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          -o ConnectTimeout=30
+        )
+
+        # Update channels.json
+        CHANNELS_FILE=$(mktemp)
+
+        # Fetch existing channels.json or create empty one
+        ssh "${SSH_OPTS[@]}" "okapy-deploy@${DEPLOY_HOST}" \
+          "cat ${DEPLOY_PATH}/channels.json 2>/dev/null" > "$CHANNELS_FILE" || echo '{"releases":[]}' > "$CHANNELS_FILE"
+
         # Update the channel entry using jq
         UPDATED=$(jq --arg channel "$CHANNEL" \
                      --arg version "$VERSION" \
                      --argjson split_version "$SPLIT_VERSION" \
-                     --arg url "${DEPLOY_URL}/${DEPLOY_DIR}/updates.json" \
+                     --arg url "$URL" \
                      --argjson timestamp "$TIMESTAMP" \
                      --arg pretty_version "$PRETTY_VERSION" \
                      --arg description "$DESCRIPTION" \
@@ -994,10 +1035,16 @@ jobs:
         echo "$UPDATED" > "$CHANNELS_FILE"
 
         # Upload updated channels.json
-        scp -i ~/.ssh/deploy_key "$CHANNELS_FILE" \
+        scp "${SSH_OPTS[@]}" "$CHANNELS_FILE" \
           "okapy-deploy@${DEPLOY_HOST}:${DEPLOY_PATH}/channels.json"
 
         # Clean up
         rm -f ~/.ssh/deploy_key "$CHANNELS_FILE"
       env:
-        OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+        CHANNEL: ${{ steps.deploy_info.outputs.channel }}
+        VERSION: ${{ steps.deploy_info.outputs.version }}
+        SPLIT_VERSION: ${{ steps.deploy_info.outputs.split_version }}
+        URL: ${{ steps.deploy_info.outputs.url }}
+        TIMESTAMP: ${{ steps.deploy_info.outputs.timestamp }}
+        PRETTY_VERSION: ${{ steps.deploy_info.outputs.pretty_version }}
+        DESCRIPTION: ${{ steps.deploy_info.outputs.description }}
